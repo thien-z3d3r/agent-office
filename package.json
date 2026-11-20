@@ -1,0 +1,41 @@
+{
+  "name": "agent-office-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit -p packages/protocol/tsconfig.json && tsc --noEmit -p apps/server/tsconfig.json && tsc --noEmit -p apps/web/tsconfig.json",
+    "test": "node --test packages/protocol/tests/*.test.ts apps/server/tests/*.test.ts",
+    "arch:check": "node scripts/arch-check.ts",
+    "assets:export": "blender --background --python assets/scripts/export_all.py",
+    "assets:check": "node assets/scripts/check_budgets.ts",
+    "dev:server": "node --watch apps/server/src/index.ts",
+    "dev:web": "npm --workspace @agent-office/web run dev",
+    "start": "node apps/server/src/index.ts",
+    "db:backup": "node scripts/backup-sqlite.ts",
+    "build": "npm --workspace @agent-office/web run build && npm run typecheck"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@types/three": "^0.170.0",
+    "@types/ws": "^8.5.13",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.3"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "three": "^0.170.0",
+    "ws": "^8.18.0",
+    "yaml": "^2.6.1",
+    "zod": "^3.24.1",
+    "zustand": "^5.0.2"
+  }
+}

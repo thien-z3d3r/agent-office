@@ -1,0 +1,15 @@
+{"id":"l1","ts":1700000010000,"t":"ticket.upsert","ticket":{"id":"T-202","title":"Full-stack Analytics Endpoint & Dashboard Widget","description":"Build /api/metrics and 3D HUD metric badge","size":"L","stage":"Triage","assignee":"em","authorRole":"be","reviewRounds":0,"qaBounces":0,"spentUsd":0,"comments":[],"createdAt":1700000010000,"updatedAt":1700000010000}}
+{"id":"l2","ts":1700000010200,"t":"handoff","from":"em","to":"pm","ticketId":"T-202","stage":"Spec","note":"Size L: write product spec docs/specs/T-202.md"}
+{"id":"l3","ts":1700000010400,"t":"agent.status","agentId":"pm","runId":"r-pm-202","ticketId":"T-202","status":"writing","detail":"Writing docs/specs/T-202.md at whiteboard","targetZone":"planning_pod_pm"}
+{"id":"l4","ts":1700000010600,"t":"handoff","from":"pm","to":"tl","ticketId":"T-202","stage":"Design","note":"Spec complete; draft ADR docs/adr/T-202.md"}
+{"id":"l5","ts":1700000010800,"t":"agent.status","agentId":"tl","runId":"r-tl-202","ticketId":"T-202","status":"writing","detail":"Drafting docs/adr/T-202.md","targetZone":"planning_pod_tl"}
+{"id":"l6","ts":1700000011000,"t":"handoff","from":"tl","to":"be","ticketId":"T-202","stage":"InProgress","note":"ADR approved; implement backend in worktree"}
+{"id":"l7","ts":1700000011200,"t":"agent.status","agentId":"be","runId":"r-be-202","ticketId":"T-202","status":"writing","detail":"Implementing endpoint via jcode (antigravity)"}
+{"id":"l8","ts":1700000011400,"t":"handoff","from":"be","to":"reviewer","ticketId":"T-202","stage":"Review","note":"Diff ready for Reviewer sub-agent"}
+{"id":"l9","ts":1700000011600,"t":"agent.status","agentId":"reviewer","runId":"r-rev-202","ticketId":"T-202","status":"reading","detail":"Worktree diff review passed"}
+{"id":"l10","ts":1700000011800,"t":"handoff","from":"reviewer","to":"qa","ticketId":"T-202","stage":"QA","note":"Run test suite in QA lab"}
+{"id":"l11","ts":1700000012000,"t":"agent.status","agentId":"qa","runId":"r-qa-202","ticketId":"T-202","status":"executing","detail":"Running npm test on device wall"}
+{"id":"l12","ts":1700000012200,"t":"handoff","from":"qa","to":"devops","ticketId":"T-202","stage":"ReadyToMerge","note":"All QA tests green; prepare release"}
+{"id":"l13","ts":1700000012400,"t":"agent.status","agentId":"devops","runId":"r-do-202","ticketId":"T-202","status":"executing","detail":"Verifying production build at server rack"}
+{"id":"l14","ts":1700000012600,"t":"agent.status","agentId":"devops","runId":"r-do-202","ticketId":"T-202","status":"done","detail":"Merged T-202 after Director approval"}
+{"id":"l15","ts":1700000012800,"t":"ticket.upsert","ticket":{"id":"T-202","title":"Full-stack Analytics Endpoint & Dashboard Widget","description":"Build /api/metrics and 3D HUD metric badge","size":"L","stage":"Done","assignee":null,"authorRole":"be","branch":"agent/be/T-202","specPath":"docs/specs/T-202.md","adrPath":"docs/adr/T-202.md","reviewRounds":0,"qaBounces":0,"spentUsd":0.038,"comments":[],"createdAt":1700000010000,"updatedAt":1700000012800}}

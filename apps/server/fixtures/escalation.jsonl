@@ -1,0 +1,4 @@
+{"id":"x1","ts":1700000020000,"t":"ticket.upsert","ticket":{"id":"T-303","title":"Install custom benchmark package","description":"Needs external shell command approval","size":"M","stage":"InProgress","assignee":"fe","authorRole":"fe","reviewRounds":0,"qaBounces":0,"spentUsd":0,"comments":[],"createdAt":1700000020000,"updatedAt":1700000020000}}
+{"id":"x2","ts":1700000020200,"t":"approval.req","reqId":"req-303","agentId":"fe","runId":"r-fe-303","ticketId":"T-303","kind":"command","action":"npm install tinybench","risk":"medium","reason":"Command is not in role allowCommands"}
+{"id":"x3","ts":1700000020500,"t":"approval.res","reqId":"req-303","approved":true,"resolvedBy":"director","note":"Approved by Director"}
+{"id":"x4","ts":1700000020800,"t":"agent.status","agentId":"fe","runId":"r-fe-303","ticketId":"T-303","status":"done","detail":"Completed benchmark setup"}

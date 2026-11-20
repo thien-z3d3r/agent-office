@@ -1,0 +1,11 @@
+{"id":"f1","ts":1700000001000,"t":"ticket.upsert","ticket":{"id":"T-101","title":"Add subtract() to math.ts","description":"Add subtract(a,b) and unit check","size":"S","stage":"Triage","assignee":"em","authorRole":"fe","reviewRounds":0,"qaBounces":0,"spentUsd":0,"comments":[],"createdAt":1700000001000,"updatedAt":1700000001000}}
+{"id":"f2","ts":1700000001200,"t":"agent.status","agentId":"em","runId":"r-em-101","ticketId":"T-101","status":"thinking","detail":"Triaging ticket T-101 (Size S -> FE)"}
+{"id":"f3","ts":1700000001400,"t":"handoff","from":"em","to":"fe","ticketId":"T-101","stage":"InProgress","note":"Size S assigned to Frontend Engineer"}
+{"id":"f4","ts":1700000001600,"t":"agent.status","agentId":"fe","runId":"r-fe-101","ticketId":"T-101","status":"reading","detail":"Reading src/math.ts"}
+{"id":"f5","ts":1700000001800,"t":"tool.start","agentId":"fe","runId":"r-fe-101","ticketId":"T-101","callId":"c1","tool":"write","summary":"src/math.ts"}
+{"id":"f6","ts":1700000002000,"t":"agent.status","agentId":"fe","runId":"r-fe-101","ticketId":"T-101","status":"writing","detail":"Editing src/math.ts"}
+{"id":"f7","ts":1700000002200,"t":"tool.end","agentId":"fe","runId":"r-fe-101","ticketId":"T-101","callId":"c1","ok":true,"preview":"Added export function subtract(a, b)"}
+{"id":"f8","ts":1700000002400,"t":"handoff","from":"fe","to":"reviewer","ticketId":"T-101","stage":"Review","note":"Branch agent/fe/T-101 ready for review"}
+{"id":"f9","ts":1700000002600,"t":"agent.status","agentId":"reviewer","runId":"r-rev-101","ticketId":"T-101","status":"reading","detail":"Reviewing git diff main...agent/fe/T-101"}
+{"id":"f10","ts":1700000002800,"t":"agent.status","agentId":"reviewer","runId":"r-rev-101","ticketId":"T-101","status":"done","detail":"Approved T-101 diff"}
+{"id":"f11","ts":1700000003000,"t":"ticket.upsert","ticket":{"id":"T-101","title":"Add subtract() to math.ts","description":"Add subtract(a,b) and unit check","size":"S","stage":"Done","assignee":null,"authorRole":"fe","branch":"agent/fe/T-101","reviewRounds":0,"qaBounces":0,"spentUsd":0.004,"comments":[],"createdAt":1700000001000,"updatedAt":1700000003000}}
