@@ -19,6 +19,7 @@ export interface AgentLiveState {
   outTok: number;
   costUsd: number;
   subAgentId?: string | null;
+  model?: string | null;
 }
 
 export interface PendingApproval {
@@ -37,6 +38,7 @@ export interface OfficeStateSnapshot {
   activeProvider: ProviderId;
   activeRuntime: RuntimeKind;
   activeModel: string | null;
+  roleModels: Partial<Record<AgentRoleId, string>>;
   agents: Record<AgentRoleId, AgentLiveState>;
   tickets: Record<string, Ticket>;
   taskTable: Record<string, TaskTableRow>;
@@ -57,6 +59,56 @@ export const ALL_ROLE_IDS: readonly AgentRoleId[] = [
   "devops",
 ];
 
+export const PROVIDER_DEFAULT_MODELS: Record<ProviderId, string> = {
+  antigravity: "gemini-2.5-pro",
+  claude: "claude-sonnet-4-5-20250929",
+  openai_oauth: "gpt-5.4",
+  openai_api: "gpt-4.1",
+  kimi_code: "kimi-for-coding",
+  gemini: "gemini-2.5-flash",
+};
+
+export function normalizeRoleModels(
+  input?: Partial<Record<AgentRoleId, string | null>> | null
+): Partial<Record<AgentRoleId, string>> {
+  const normalized: Partial<Record<AgentRoleId, string>> = {};
+  if (!input) {
+    return normalized;
+  }
+  for (const roleId of ALL_ROLE_IDS) {
+    const raw = input[roleId];
+    if (typeof raw === "string") {
+      const trimmed = raw.trim();
+      if (trimmed.length > 0) {
+        normalized[roleId] = trimmed;
+      }
+    }
+  }
+  return normalized;
+}
+
+export function resolveModelForRole(args: {
+  provider: ProviderId;
+  roleId: AgentRoleId;
+  activeModel?: string | null;
+  roleModels?: Partial<Record<AgentRoleId, string | null>> | null;
+  defaultModel?: string | null;
+}): string {
+  const roleOverride = args.roleModels?.[args.roleId]?.trim();
+  if (roleOverride) {
+    return roleOverride;
+  }
+  const activeOverride = args.activeModel?.trim();
+  if (activeOverride) {
+    return activeOverride;
+  }
+  const explicitDefault = args.defaultModel?.trim();
+  if (explicitDefault) {
+    return explicitDefault;
+  }
+  return PROVIDER_DEFAULT_MODELS[args.provider];
+}
+
 export function createInitialOfficeState(): OfficeStateSnapshot {
   const agents = {} as Record<AgentRoleId, AgentLiveState>;
   for (const id of ALL_ROLE_IDS) {
@@ -72,12 +124,14 @@ export function createInitialOfficeState(): OfficeStateSnapshot {
       outTok: 0,
       costUsd: 0,
       subAgentId: null,
+      model: null,
     };
   }
   return {
     activeProvider: "antigravity",
     activeRuntime: "jcode",
     activeModel: null,
+    roleModels: {},
     agents,
     tickets: {},
     taskTable: {},

@@ -1,6 +1,7 @@
 import type { AgentEvent, AgentRoleId } from "./schemas.ts";
 import {
   ALL_ROLE_IDS,
+  normalizeRoleModels,
   type AgentLiveState,
   type OfficeStateSnapshot,
 } from "./state.ts";
@@ -227,11 +228,19 @@ export function officeReducer(
       };
     }
     case "provider.changed": {
+      const providerChanged = event.provider !== state.activeProvider;
+      const nextRoleModels =
+        event.roleModels !== undefined
+          ? normalizeRoleModels(event.roleModels)
+          : providerChanged
+            ? {}
+            : state.roleModels;
       return {
         ...state,
         activeProvider: event.provider,
         activeRuntime: event.runtime,
         activeModel: event.model ?? null,
+        roleModels: nextRoleModels,
         eventCount,
       };
     }
@@ -267,6 +276,7 @@ export function officeReducer(
         nextAgents[row.role] = {
           ...prevAgent,
           subAgentId: row.subAgentId,
+          model: row.model ?? prevAgent.model ?? null,
           currentTicketId: row.ticketId,
           status:
             row.status === "done" && prevAgent.status === "handoff"
@@ -295,6 +305,7 @@ export function officeReducer(
           [event.row.role]: {
             ...prevAgent,
             subAgentId: event.row.subAgentId,
+            model: event.row.model ?? prevAgent.model ?? null,
             currentTicketId: event.row.ticketId,
           },
         },

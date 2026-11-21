@@ -1,14 +1,15 @@
 import crypto from "node:crypto";
-import type {
-  AgentEvent,
-  AgentRoleId,
-  OfficeConfig,
-  OfficeStateSnapshot,
-  RoleConfig,
-  RuntimeKind,
-  TaskTableRow,
-  Ticket,
-  TicketStage,
+import {
+  resolveModelForRole,
+  type AgentEvent,
+  type AgentRoleId,
+  type OfficeConfig,
+  type OfficeStateSnapshot,
+  type RoleConfig,
+  type RuntimeKind,
+  type TaskTableRow,
+  type Ticket,
+  type TicketStage,
 } from "@agent-office/protocol";
 import { validateRuntimeForProvider } from "../domain/providers.ts";
 import {
@@ -99,7 +100,12 @@ export async function runRoleStage(
   const snapshot = ctx.getSnapshot();
   const baseRole = ctx.getRole(args.roleId);
   const activeProvider = snapshot.activeProvider;
-  const activeModel = snapshot.activeModel ?? undefined;
+  const resolvedModel = resolveModelForRole({
+    provider: activeProvider,
+    roleId: args.roleId,
+    activeModel: snapshot.activeModel,
+    roleModels: snapshot.roleModels,
+  });
   const runtimeKind: RuntimeKind =
     args.mode === "scripted" ? "scripted" : snapshot.activeRuntime;
 
@@ -155,7 +161,7 @@ export async function runRoleStage(
     args.ticket.id,
     args.roleId,
     "running",
-    `Spawned ${subAgentLabel} on ${activeProvider}`
+    `Spawned ${subAgentLabel} (${resolvedModel}) on ${activeProvider}`
   );
 
   const { worktreePath, branch } = await ctx.workspace.ensureWorktree(
@@ -208,7 +214,7 @@ export async function runRoleStage(
       role: baseRole,
       provider: activeProvider,
       runtime: runtimeKind,
-      model: activeModel,
+      model: resolvedModel,
       prompt: args.prompt,
       worktreePath,
       signal: controller.signal,

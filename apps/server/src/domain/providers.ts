@@ -52,7 +52,7 @@ export const PROVIDER_METADATA: Record<ProviderId, ProviderMetadata> = {
     supportedRuntimes: ["jcode", "codex-sdk", "scripted"],
     jcodeProvider: "openai",
     envKey: "OPENAI_API_KEY",
-    defaultModel: "gpt-4.1",
+    defaultModel: "gpt-5.4",
   },
   openai_api: {
     authMode: "api-key",

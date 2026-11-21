@@ -1,11 +1,13 @@
 import { create } from "zustand";
 import {
   createInitialOfficeState,
+  normalizeRoleModels,
   officeReducer,
   type AgentEvent,
   type AgentRoleId,
   type OfficeStateSnapshot,
   type ProviderId,
+  type ProviderModelCatalog,
   type RoleConfig,
   type RuntimeKind,
 } from "@agent-office/protocol";
@@ -13,9 +15,11 @@ import { DEFAULT_ROLES } from "./default-roles.ts";
 import {
   connectOfficeSocket,
   fetchOfficeSettings,
+  fetchProviderModels as fetchProviderModelsApi,
   postActiveProvider,
   postApproval,
   postFixture,
+  postProviderModels,
   postSecretKey,
   postStandup,
   postTicket,
@@ -23,6 +27,7 @@ import {
   type JcodeAuthInfo,
   type SubmitTicketInput,
 } from "./office-transport.ts";
+import type { SettingsTab } from "./provider-catalog.ts";
 
 export type { JcodeAuthInfo } from "./office-transport.ts";
 
@@ -35,8 +40,12 @@ export interface OfficeStoreState {
   reducedMotion: boolean;
   performanceMode: boolean;
   settingsOpen: boolean;
+  settingsTab: SettingsTab;
   configuredKeys: Record<string, boolean>;
   jcodeAuth: Record<string, JcodeAuthInfo>;
+  modelCatalogByProvider: Partial<Record<ProviderId, ProviderModelCatalog>>;
+  modelCatalogLoading: boolean;
+  modelCatalogError: string | null;
   recentEvents: AgentEvent[];
   lastError: string | null;
   modelsError: string | null;
@@ -45,10 +54,16 @@ export interface OfficeStoreState {
   toggleReducedMotion: () => void;
   togglePerformanceMode: () => void;
   setSettingsOpen: (open: boolean) => void;
+  setSettingsTab: (tab: SettingsTab) => void;
+  openSettingsModal: (tab?: SettingsTab) => void;
   clearError: () => void;
   setModelsError: (error: string | null) => void;
   connectSocket: () => () => void;
   fetchSettings: () => Promise<void>;
+  fetchProviderModels: (
+    providerId?: ProviderId,
+    refresh?: boolean
+  ) => Promise<void>;
   saveSecretKey: (keyName: string, value: string) => Promise<void>;
   submitTicket: (input: SubmitTicketInput) => Promise<void>;
   resolveApproval: (reqId: string, approved: boolean) => Promise<void>;
@@ -57,8 +72,14 @@ export interface OfficeStoreState {
   setActiveProvider: (
     provider: ProviderId,
     runtime?: RuntimeKind,
-    model?: string | null
+    model?: string | null,
+    roleModels?: Partial<Record<AgentRoleId, string | null>>
   ) => Promise<void>;
+  updateProviderModels: (input: {
+    model?: string | null;
+    roleModels?: Partial<Record<AgentRoleId, string | null>>;
+    resetRoles?: boolean;
+  }) => Promise<void>;
 }
 
 const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
@@ -188,8 +209,12 @@ export const useOfficeStore = create<OfficeStoreState>((set, get) => {
     reducedMotion: getReducedMotionMediaQuery()?.matches ?? false,
     performanceMode: loadPerformanceMode(),
     settingsOpen: false,
+    settingsTab: "credentials",
     configuredKeys: {},
     jcodeAuth: {},
+    modelCatalogByProvider: {},
+    modelCatalogLoading: false,
+    modelCatalogError: null,
     recentEvents: [],
     lastError: null,
     modelsError: null,
@@ -208,6 +233,9 @@ export const useOfficeStore = create<OfficeStoreState>((set, get) => {
       });
     },
     setSettingsOpen: (open) => set({ settingsOpen: open }),
+    setSettingsTab: (tab) => set({ settingsTab: tab }),
+    openSettingsModal: (tab = "credentials") =>
+      set({ settingsOpen: true, settingsTab: tab }),
     clearError: () => set({ lastError: null }),
     setModelsError: (error) => set({ modelsError: error }),
 
@@ -279,6 +307,7 @@ export const useOfficeStore = create<OfficeStoreState>((set, get) => {
               activeProvider: state.activeProvider ?? "antigravity",
               activeRuntime: state.activeRuntime ?? "jcode",
               activeModel: state.activeModel ?? null,
+              roleModels: normalizeRoleModels(state.roleModels),
             },
             roles: roles?.length ? roles : get().roles,
           });
@@ -319,6 +348,27 @@ export const useOfficeStore = create<OfficeStoreState>((set, get) => {
       }
     },
 
+    fetchProviderModels: async (providerId, refresh = false) => {
+      const target = providerId ?? get().snapshot.activeProvider;
+      set({ modelCatalogLoading: true, modelCatalogError: null });
+      try {
+        const catalog = await fetchProviderModelsApi(target, refresh);
+        set((prev) => ({
+          modelCatalogLoading: false,
+          modelCatalogError: null,
+          modelCatalogByProvider: {
+            ...prev.modelCatalogByProvider,
+            [target]: catalog,
+          },
+        }));
+      } catch (err) {
+        set({
+          modelCatalogLoading: false,
+          modelCatalogError: toErrorMessage(err),
+        });
+      }
+    },
+
     saveSecretKey: async (keyName, value) => {
       try {
         await postSecretKey(keyName, value);
@@ -326,6 +376,7 @@ export const useOfficeStore = create<OfficeStoreState>((set, get) => {
         set({
           configuredKeys: data.configuredKeys,
           jcodeAuth: data.jcodeAuth,
+          modelCatalogByProvider: {},
           lastError: null,
         });
       } catch (err) {
@@ -369,20 +420,66 @@ export const useOfficeStore = create<OfficeStoreState>((set, get) => {
       }
     },
 
-    setActiveProvider: async (provider, runtime, model) => {
+    setActiveProvider: async (provider, runtime, model, roleModels) => {
       try {
-        const event = await postActiveProvider(provider, runtime, model);
-        set((prev) => ({
-          lastError: null,
-          snapshot: event
-            ? {
+        const event = await postActiveProvider(
+          provider,
+          runtime,
+          model,
+          roleModels
+        );
+        set((prev) => {
+          const nextSnapshot = event
+            ? officeReducer(prev.snapshot, event)
+            : prev.snapshot;
+          const cached = prev.modelCatalogByProvider[nextSnapshot.activeProvider];
+          return {
+            lastError: null,
+            snapshot: nextSnapshot,
+            modelCatalogByProvider: cached
+              ? {
+                  ...prev.modelCatalogByProvider,
+                  [nextSnapshot.activeProvider]: {
+                    ...cached,
+                    activeModel: nextSnapshot.activeModel,
+                    roleModels: nextSnapshot.roleModels,
+                  },
+                }
+              : prev.modelCatalogByProvider,
+          };
+        });
+      } catch (err) {
+        set({ lastError: toErrorMessage(err) });
+      }
+    },
+
+    updateProviderModels: async (input) => {
+      try {
+        const res = await postProviderModels(input);
+        set((prev) => {
+          const nextSnapshot = res.event
+            ? officeReducer(prev.snapshot, res.event)
+            : {
                 ...prev.snapshot,
-                activeProvider: event.provider,
-                activeRuntime: event.runtime,
-                activeModel: event.model ?? null,
-              }
-            : prev.snapshot,
-        }));
+                activeModel: res.activeModel,
+                roleModels: res.roleModels,
+              };
+          const cached = prev.modelCatalogByProvider[nextSnapshot.activeProvider];
+          return {
+            lastError: null,
+            snapshot: nextSnapshot,
+            modelCatalogByProvider: cached
+              ? {
+                  ...prev.modelCatalogByProvider,
+                  [nextSnapshot.activeProvider]: {
+                    ...cached,
+                    activeModel: nextSnapshot.activeModel,
+                    roleModels: nextSnapshot.roleModels,
+                  },
+                }
+              : prev.modelCatalogByProvider,
+          };
+        });
       } catch (err) {
         set({ lastError: toErrorMessage(err) });
       }

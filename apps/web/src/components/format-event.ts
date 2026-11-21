@@ -32,8 +32,17 @@ export function formatEventLine(ev: AgentEvent): string {
       } tok ($${ev.costUsd.toFixed(4)})`;
     case "agent.text":
       return `[${ev.agentId.toUpperCase()}] ${ev.delta.trim().slice(0, 80)}`;
-    case "provider.changed":
-      return `[PROVIDER] Office unified provider switched to ${ev.provider.toUpperCase()} (${ev.runtime}${ev.model ? `, ${ev.model}` : ""})`;
+    case "provider.changed": {
+      let overrideCount = 0;
+      if (ev.roleModels) {
+        for (const key in ev.roleModels) {
+          if (ev.roleModels[key as keyof typeof ev.roleModels]) {
+            overrideCount += 1;
+          }
+        }
+      }
+      return `[PROVIDER] Office unified provider switched to ${ev.provider.toUpperCase()} (${ev.runtime}${ev.model ? `, ${ev.model}` : ""}${overrideCount > 0 ? `, +${overrideCount} role overrides` : ""})`;
+    }
     case "task.table.set":
       return `[TASK TABLE] Generated ${ev.rows.length} role sub-agent tasks for ${ev.ticketId}`;
     case "task.row.updated":

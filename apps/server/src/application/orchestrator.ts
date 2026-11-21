@@ -1,7 +1,9 @@
 import crypto from "node:crypto";
 import {
   createInitialOfficeState,
+  normalizeRoleModels,
   officeReducer,
+  resolveModelForRole,
   type AgentEvent,
   type AgentRoleId,
   type OfficeConfig,
@@ -83,15 +85,17 @@ export class OfficeOrchestrator {
       args.config.activeModel.trim().length > 0
         ? args.config.activeModel.trim()
         : null;
+    const initialRoleModels = normalizeRoleModels(args.config.roleModels);
 
     this.state = {
       ...createInitialOfficeState(),
       activeProvider: initialProvider,
       activeRuntime: initialRuntime,
       activeModel: initialModel,
+      roleModels: initialRoleModels,
     };
 
-    const existing = this.store.listAll(2000);
+    const existing = this.store.listAll();
     for (const ev of existing) {
       this.state = officeReducer(this.state, ev);
     }
@@ -119,12 +123,26 @@ export class OfficeOrchestrator {
   setActiveProvider(
     provider: ProviderId,
     runtime?: RuntimeKind,
-    model?: string | null
+    model?: string | null,
+    roleModels?: Partial<Record<AgentRoleId, string | null>>
   ): AgentEvent {
     const resolvedRuntime = runtime ?? PROVIDER_METADATA[provider].defaultRuntime;
     validateRuntimeForProvider(provider, resolvedRuntime);
+    const providerChanged = provider !== this.state.activeProvider;
     const normalizedModel =
-      typeof model === "string" && model.trim().length > 0 ? model.trim() : null;
+      model !== undefined
+        ? typeof model === "string" && model.trim().length > 0
+          ? model.trim()
+          : null
+        : providerChanged
+          ? null
+          : this.state.activeModel ?? null;
+    const nextRoleModels =
+      roleModels !== undefined
+        ? normalizeRoleModels(roleModels)
+        : providerChanged
+          ? {}
+          : this.state.roleModels;
     const ev: AgentEvent = {
       id: crypto.randomUUID(),
       ts: Date.now(),
@@ -132,6 +150,7 @@ export class OfficeOrchestrator {
       provider,
       runtime: resolvedRuntime,
       model: normalizedModel,
+      roleModels: nextRoleModels,
     };
     this.emit(ev);
     for (const ticket of Object.values(this.state.tickets)) {
@@ -141,8 +160,45 @@ export class OfficeOrchestrator {
     return ev;
   }
 
+  setModelConfig(input: {
+    model?: string | null;
+    roleModels?: Partial<Record<AgentRoleId, string | null>>;
+    resetRoles?: boolean;
+  }): AgentEvent {
+    const nextModel =
+      input.model === undefined
+        ? this.state.activeModel
+        : typeof input.model === "string" && input.model.trim().length > 0
+          ? input.model.trim()
+          : null;
+
+    let nextRoleModels: Partial<Record<AgentRoleId, string>>;
+    if (input.resetRoles) {
+      nextRoleModels = {};
+    } else if (input.roleModels !== undefined) {
+      nextRoleModels = normalizeRoleModels({
+        ...this.state.roleModels,
+        ...input.roleModels,
+      });
+    } else {
+      nextRoleModels = this.state.roleModels;
+    }
+
+    return this.setActiveProvider(
+      this.state.activeProvider,
+      this.state.activeRuntime,
+      nextModel,
+      nextRoleModels
+    );
+  }
+
   buildTaskTableForTicket(ticket: Ticket): TaskTableRow[] {
-    return buildTaskTableForTicket(ticket, this.state.activeProvider);
+    return buildTaskTableForTicket(
+      ticket,
+      this.state.activeProvider,
+      this.state.activeModel,
+      this.state.roleModels
+    );
   }
 
   syncTaskTableForTicket(ticketId: string): void {
@@ -151,7 +207,9 @@ export class OfficeOrchestrator {
     const rows = buildSyncedTaskTableRows(
       ticket,
       this.state.activeProvider,
-      this.state.taskTable
+      this.state.taskTable,
+      this.state.activeModel,
+      this.state.roleModels
     );
     this.emit({
       id: crypto.randomUUID(),
@@ -168,13 +226,20 @@ export class OfficeOrchestrator {
     status: TaskTableRow["status"],
     outputPreview?: string
   ): void {
+    const resolvedModel = resolveModelForRole({
+      provider: this.state.activeProvider,
+      roleId: role,
+      activeModel: this.state.activeModel,
+      roleModels: this.state.roleModels,
+    });
     const updated = buildUpdatedTaskRow(
       this.state.taskTable,
       ticketId,
       role,
       this.state.activeProvider,
       status,
-      outputPreview
+      outputPreview,
+      resolvedModel
     );
     if (!updated) return;
     this.emit({

@@ -10,20 +10,20 @@ The repository is an npm workspace monorepo organized around a hexagonal backend
 
 | Path | Layer / Role | Responsibility |
 |---|---|---|
-| `packages/protocol/` | Shared Contract | Zod schemas (`schemas.ts`), initial snapshot factory (`state.ts`), and pure event reducer (`reducer.ts`) for 13 `AgentEvent` variants, `Ticket`, `TaskTableRow`, and `OfficeConfig`. |
-| `apps/server/src/domain/` | Pure Domain | Ticket workflow state machine (`ticket-machine.ts`), 3-tier shell command policy engine (`command-policy.ts`), provider registry (`providers.ts`), and role tool curation (`roles.ts`). Zero Node I/O imports. |
-| `apps/server/src/ports/` | Hexagonal Ports | Interfaces for `AgentRuntimePort`, `EventStorePort`, `WorkspacePort`, and `SecretStorePort`. |
+| `packages/protocol/` | Shared Contract | Zod schemas (`schemas.ts`), initial snapshot factory (`state.ts`), and pure event reducer (`reducer.ts`) for 13 `AgentEvent` variants, `Ticket`, `TaskTableRow`, `ModelCatalogEntry`, and `OfficeConfig`. |
+| `apps/server/src/domain/` | Pure Domain | Ticket workflow state machine (`ticket-machine.ts`), 3-tier shell command policy engine (`command-policy.ts`), provider registry (`providers.ts`), curated model catalog (`model-catalog.ts`), and role tool curation (`roles.ts`). Zero Node I/O imports. |
+| `apps/server/src/ports/` | Hexagonal Ports | Interfaces for `AgentRuntimePort`, `EventStorePort`, `WorkspacePort`, `SecretStorePort`, and `ModelDiscoveryPort`. |
 | `apps/server/src/application/` | Application Services | `OfficeOrchestrator` (`orchestrator.ts`), `TaskTable` generator (`task-table.ts`), coalesced stage runner (`stage-runner.ts`), and standup coordinator (`standup.ts`). |
-| `apps/server/src/adapters/` | Infrastructure Adapters | `SQLiteOfficeStore` (`node:sqlite` WAL + `StatementSync` + AES-256-GCM secrets), `GitWorktreeAdapter` (`.worktrees/<role>-<ticketId>`), HTTP/WS server (`http/server.ts`), and runtime adapters (`scripted`, `jcode`, `ai-sdk`, `claude-agent-sdk`, `codex-sdk`). |
+| `apps/server/src/adapters/` | Infrastructure Adapters | `SQLiteOfficeStore` (`node:sqlite` WAL + `StatementSync` + AES-256-GCM secrets), `GitWorktreeAdapter` (`.worktrees/<role>-<ticketId>`), HTTP/WS server (`http/server.ts`), live model discovery (`runtimes/model-discovery.ts`), and runtime adapters (`scripted`, `jcode`, `ai-sdk`, `claude-agent-sdk`, `codex-sdk`). |
 | `apps/web/src/scene/` | 3D WebGL Scene | `OfficeCanvas.tsx` (on-demand render loop, `ToonOutlineEffect`, Performance Mode, raycasting), `toon.ts` (3-step cel-shading ramp and static world merge), `toon-outline.ts` (instancing-aware outline pass), `toon-actors.ts` (`ToonWorkerPool`, `ToonLaptopPool`, merged `OfficeDog`, instanced `ConfettiSystem`), `models.ts`, `nav-and-intent.ts` (Grid A* and `IntentQueue`), and modular room builders in `world/` (`static-atlas.ts`, `architecture.ts`, `furniture.ts`, `boards.ts`, `world-builder.ts`). |
-| `apps/web/src/components/` | 2D Accessible HUD | 18 focused components (`TopBar`, `HudDock`, `SidePanel`, `WorkersPanel`, `TaskTablePanel`, `SpendPanel`, `EventFeed`, `ApprovalDock`, `DispatchTicketModal`, `AgentInspectorModal`, `ProvidersModal`, `ModalDialog`, `useModalFocusTrap`, `TelescopeOverlay`, `LoadingOverlay`, `ErrorBanner`). |
+| `apps/web/src/components/` | 2D Accessible HUD | 19 focused modules (`TopBar`, `HudDock`, `SidePanel`, `WorkersPanel`, `WorkerRow`, `TaskTablePanel`, `SpendPanel`, `EventFeed`, `ApprovalDock`, `DispatchTicketModal`, `AgentInspectorModal`, `ProvidersModal`, `ModelCatalogTab`, `ModalDialog`, `useModalFocusTrap`, `TelescopeOverlay`, `LoadingOverlay`, `ErrorBanner`, `format-event.ts`). |
 | `apps/web/src/store/` | Client State | Zustand store (`office-store.ts` with `56 ms` streaming batch coalescing and `performanceMode`), WebSocket/REST transport (`office-transport.ts`), provider catalog (`provider-catalog.ts`), and default role descriptors (`default-roles.ts`). |
 | `assets/` | 3D Asset Pipeline | Headless Blender Python builders (`assets/scripts/build_*.py`, `export_all.py`) and binary GLB budget verifier (`assets/scripts/check_budgets.ts`). |
 | `scripts/` | Verification & Ops | Hexagonal dependency boundary checker (`arch-check.ts`) and online SQLite backup utility (`backup-sqlite.ts`). |
 
 ## Unified Provider and Task Table Model
 
-Instead of requiring separate credentials for each desk, a single active provider (`snapshot.activeProvider`, defaulting to `antigravity` via `jcode` OAuth and switchable live from the top bar or `POST /api/provider`) drives every role seat in the office.
+Instead of requiring separate credentials for each desk, a single active provider (`snapshot.activeProvider`, defaulting to `antigravity` via `jcode` OAuth and switchable live from the top bar or `POST /api/provider`) drives every role seat in the office. That active provider carries an optional provider-wide default model override (`snapshot.activeModel`) and optional per-role overrides (`snapshot.roleModels` across `em`, `pm`, `tl`, `fe`, `be`, `qa`, `reviewer`, `devops`), resolving each sub-agent via `roleModels[role] ?? activeModel ?? providerDefaultModel` and clearing stale overrides when switching providers.
 
 When a ticket is dispatched or a fixture is replayed, the orchestrator builds an ordered **Task Table** (`TaskTableRow[]`) tailored to the ticket size (`S`, `M`, `L`) and primary engineer role (`fe` or `be`):
 
@@ -41,7 +41,7 @@ When a ticket is dispatched or a fixture is replayed, the orchestrator builds an
 
 ### Agent Inspector (Terminal Stream and Git Diff)
 
-Clicking any 3D worker or any row in the **Workers** or **Task Table** panels opens the Agent Inspector dialog. It displays the active unified provider, the spawned sub-agent ID (`sub-<provider>-<role>-<order>`), token and USD usage, curated tool permissions, the live **Laptop Terminal Stream**, and the **Git Worktree Diff** for the active branch. Role tabs at the bottom support roving `ArrowLeft`, `ArrowRight`, `Home`, and `End` keyboard navigation.
+Clicking any 3D worker or any row in the **Workers** or **Task Table** panels opens the Agent Inspector dialog. It displays the active unified provider, the resolved model for the inspected role (`Role Override` or `Provider Default`, also shown in `WorkerRow` and `TaskTablePanel`), the spawned sub-agent ID (`sub-<provider>-<role>-<order>`), token and USD usage, curated tool permissions, the live **Laptop Terminal Stream**, and the **Git Worktree Diff** for the active branch. Role tabs at the bottom support roving `ArrowLeft`, `ArrowRight`, `Home`, and `End` keyboard navigation.
 
 ![Agent Inspector Modal](docs/screenshots/03-agent-inspector.png)
 
@@ -57,11 +57,16 @@ Activating **Loft Telescope** moves the camera to the brass tripod telescope in 
 
 ![Director Loft Telescope](docs/screenshots/05-loft-telescope.png)
 
-### Providers and OAuth Settings
+### Providers, Models, and OAuth Settings
 
-Opening **Providers & OAuth** opens the **Single Active Provider & Credentials** dialog. It configures the single active office provider (`Active Provider`, `Execution Runtime`, and optional `Model Override`), probes the active provider's readiness (`jcode` OAuth status or encrypted SQLite API key), and groups the remaining inactive providers inside an optional collapsible section for future switching.
+The top-bar **Models** quick-access button displays the active default model (plus any role override count) and opens the **Providers, Models & Credentials** dialog directly to the **Model Catalog** tab. A synchronized **Providers & OAuth** button opens the **Credentials & Runtime** tab, and an accessible `role="tablist"` header switches between both tabs:
+
+- **Credentials & Runtime:** Configures the single active provider (`Active Provider` and `Execution Runtime`), probes readiness (`jcode` OAuth status or encrypted SQLite API key), summarizes the active model configuration, and keeps inactive providers inside a collapsible section.
+- **Model Catalog:** Browses curated and optionally live-discovered models per provider (`GET /api/providers/:id/models`), sets a provider-wide default or custom model ID, assigns optional per-role overrides across all 8 roles (`em`, `pm`, `tl`, `fe`, `be`, `qa`, `reviewer`, `devops`), and provides a one-click **Reset all roles to provider default** action.
 
 ![Providers and OAuth Settings](docs/screenshots/06-providers-oauth.png)
+
+![Provider Model Catalog and Per-Role Overrides](docs/screenshots/08-model-catalog.png)
 
 ### Night Mode, Performance Mode, and Accessibility
 
@@ -115,9 +120,12 @@ npm run dev:web
 |---|---|
 | `GET /api/health` | Returns `{ ok: true, service: "agent-office-server", ts }`. |
 | `GET /api/state` | Returns `{ state: OfficeStateSnapshot, roles: RoleConfig[] }`. |
-| `GET /api/settings` | Returns boolean presence of encrypted API keys (`configuredKeys`) and `jcode` OAuth readiness (`jcodeAuth`). Never returns raw secret values. |
-| `POST /api/settings/secrets` | Encrypts and stores `{ keyName, value }` in SQLite (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `KIMI_API_KEY`, `GEMINI_API_KEY`). |
-| `POST /api/provider` | Switches the unified office provider (`{ provider, runtime? }`), emits `provider.changed`, and re-syncs Task Table rows. |
+| `GET /api/settings` | Returns active provider/runtime/model/roleModels, boolean presence of encrypted API keys (`configuredKeys`), and `jcode` OAuth readiness (`jcodeAuth`). Never returns raw secret values. |
+| `GET /api/models` | Returns curated and optionally live-discovered model catalogs (`source: "curated" \| "live"`) for all 6 providers plus active default model and `roleModels` (`?refresh=1` bypasses TTL cache). |
+| `GET /api/providers/:id/models` | Returns the curated/live-discovered `ProviderModelCatalog` for a single provider ID (`?refresh=1` optional). |
+| `POST /api/settings/secrets` | Encrypts and stores `{ keyName, value }` in SQLite (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `KIMI_API_KEY`, `GEMINI_API_KEY`) and clears model discovery cache. |
+| `POST /api/provider` | Switches the unified office provider (`{ provider, runtime?, model?, roleModels? }`), emits `provider.changed`, and re-syncs active Task Table rows. |
+| `POST /api/provider/models` | Updates active provider default model, partial `roleModels` overrides, or `resetRoles` (`PATCH /api/provider/models` and `POST /api/models` also supported) and emits `provider.changed`. |
 | `POST /api/tickets` | Dispatches a ticket (`{ title, description, size: "S"\|"M"\|"L", authorRole: "fe"\|"be", mode: "scripted"\|"live", autoApproveMerge? }`). |
 | `POST /api/approvals/:reqId` | Resolves a pending Director approval gate (`{ approved: boolean, note? }`). |
 | `POST /api/standup` | Emits `standup.summary` and gathers all 8 workers in the meeting room. |
@@ -134,7 +142,7 @@ Runtime defaults live in `office.config.yaml` and are validated against `OfficeC
 |---|---|---|---|---|
 | `antigravity` | `jcode-oauth` | `jcode` | `jcode -p antigravity` | `gemini-2.5-pro` |
 | `claude` | `api-key` | `ai-sdk` | `ANTHROPIC_API_KEY` | `claude-sonnet-4-5-20250929` |
-| `openai_oauth` | `jcode-oauth` | `jcode` | `jcode -p openai` | `gpt-4.1` |
+| `openai_oauth` | `jcode-oauth` | `jcode` | `jcode -p openai` | `gpt-5.4` |
 | `openai_api` | `api-key` | `ai-sdk` | `OPENAI_API_KEY` | `gpt-4.1` |
 | `kimi_code` | `api-key` | `ai-sdk` | `KIMI_API_KEY` (`https://api.kimi.com/coding/v1`) | `kimi-for-coding` |
 | `gemini` | `api-key` | `ai-sdk` | `GEMINI_API_KEY` | `gemini-2.5-flash` |
@@ -179,6 +187,6 @@ npm run build        # Build production web bundle and run tsc --noEmit across a
 npm run typecheck    # Run strict TypeScript typecheck across protocol, server, and web
 npm run arch:check   # Verify hexagonal architecture dependency direction
 npm run assets:check # Verify all 7 GLB models against byte budgets and animation clip requirements
-npm test             # Run all 32 unit and integration test suites
+npm test             # Run all 38 unit and integration test suites
 npm run db:backup    # Create an online SQLite backup in .office-data/backups/
 ```

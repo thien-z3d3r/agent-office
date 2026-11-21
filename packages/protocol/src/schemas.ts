@@ -94,6 +94,95 @@ export const TicketSchema = z.object({
 });
 export type Ticket = z.infer<typeof TicketSchema>;
 
+export const ModelIdValueSchema = z
+  .string()
+  .refine(
+    (s) => !/[\u0000-\u001f\u007f]/.test(s),
+    "Model ID cannot contain control characters"
+  )
+  .transform((s) => s.trim())
+  .pipe(
+    z
+      .string()
+      .min(1, "Model ID cannot be empty")
+      .max(160, "Model ID exceeds 160 character limit")
+  );
+
+const RoleOverrideValueSchema = ModelIdValueSchema.nullable();
+
+export const RoleModelOverridesSchema = z
+  .object({
+    em: RoleOverrideValueSchema,
+    pm: RoleOverrideValueSchema,
+    tl: RoleOverrideValueSchema,
+    fe: RoleOverrideValueSchema,
+    be: RoleOverrideValueSchema,
+    qa: RoleOverrideValueSchema,
+    reviewer: RoleOverrideValueSchema,
+    devops: RoleOverrideValueSchema,
+  })
+  .partial()
+  .strict();
+export type RoleModelOverrides = z.infer<typeof RoleModelOverridesSchema>;
+
+export const RoleModelMapSchema = z
+  .object({
+    em: ModelIdValueSchema,
+    pm: ModelIdValueSchema,
+    tl: ModelIdValueSchema,
+    fe: ModelIdValueSchema,
+    be: ModelIdValueSchema,
+    qa: ModelIdValueSchema,
+    reviewer: ModelIdValueSchema,
+    devops: ModelIdValueSchema,
+  })
+  .partial()
+  .strict();
+export type RoleModelMap = z.infer<typeof RoleModelMapSchema>;
+
+export const ModelTierSchema = z.enum([
+  "flagship",
+  "balanced",
+  "fast",
+  "reasoning",
+  "coding",
+  "custom",
+]);
+export type ModelTier = z.infer<typeof ModelTierSchema>;
+
+export const ModelCatalogEntrySchema = z.object({
+  id: ModelIdValueSchema,
+  label: z.string().min(1),
+  tier: ModelTierSchema,
+  capabilitySummary: z.string().min(1),
+  contextWindow: z.number().int().positive().optional(),
+  maxOutputTokens: z.number().int().positive().optional(),
+  isDefault: z.boolean().optional(),
+  source: z.enum(["curated", "live", "custom"]),
+  available: z.boolean(),
+});
+export type ModelCatalogEntry = z.infer<typeof ModelCatalogEntrySchema>;
+
+export const ProviderModelCatalogSchema = z.object({
+  provider: ProviderIdSchema,
+  defaultModel: ModelIdValueSchema,
+  activeModel: ModelIdValueSchema.nullable(),
+  roleModels: RoleModelMapSchema,
+  source: z.enum(["curated", "live"]),
+  models: z.array(ModelCatalogEntrySchema),
+  discoveredAt: z.string().min(1),
+});
+export type ProviderModelCatalog = z.infer<typeof ProviderModelCatalogSchema>;
+
+export const ModelsCatalogResponseSchema = z.object({
+  activeProvider: ProviderIdSchema,
+  activeRuntime: RuntimeKindSchema,
+  activeModel: ModelIdValueSchema.nullable(),
+  roleModels: RoleModelMapSchema,
+  providers: z.record(ProviderIdSchema, ProviderModelCatalogSchema),
+});
+export type ModelsCatalogResponse = z.infer<typeof ModelsCatalogResponseSchema>;
+
 export const TaskStatusSchema = z.enum([
   "queued",
   "running",
@@ -110,6 +199,7 @@ export const TaskTableRowSchema = z.object({
   role: AgentRoleIdSchema,
   provider: ProviderIdSchema,
   subAgentId: z.string().min(1),
+  model: z.string().trim().min(1).nullable().optional(),
   title: z.string().min(1),
   artifactOrCmd: z.string(),
   status: TaskStatusSchema,
@@ -143,6 +233,7 @@ export const OfficeConfigSchema = z.object({
   activeProvider: ProviderIdSchema.default("antigravity"),
   activeRuntime: RuntimeKindSchema.optional(),
   activeModel: z.string().trim().min(1).nullable().optional(),
+  roleModels: RoleModelOverridesSchema.optional(),
   office: z.object({
     name: z.string().min(1),
     host: z.string().default("127.0.0.1"),
@@ -267,6 +358,7 @@ export const AgentEventSchema = z.discriminatedUnion("t", [
     provider: ProviderIdSchema,
     runtime: RuntimeKindSchema,
     model: z.string().trim().min(1).nullable().optional(),
+    roleModels: RoleModelOverridesSchema.optional(),
   }),
   z.object({
     ...BaseEventFields,

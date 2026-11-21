@@ -70,3 +70,17 @@ export interface SecretStorePort {
   getSecret(keyName: string): string | null;
   listConfiguredKeys(): Record<string, boolean>;
 }
+
+export interface ModelDiscoveryResult {
+  source: "curated" | "live";
+  discoveredIds: string[];
+  discoveredAt: string;
+}
+
+export interface ModelDiscoveryPort {
+  discoverModels(
+    provider: ProviderId,
+    options?: { forceRefresh?: boolean }
+  ): Promise<ModelDiscoveryResult>;
+  clearCache(provider?: ProviderId): void;
+}

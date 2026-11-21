@@ -7,6 +7,13 @@ export {
   RuntimeKindSchema,
   TicketCommentSchema,
   TicketSchema,
+  ModelIdValueSchema,
+  RoleModelOverridesSchema,
+  RoleModelMapSchema,
+  ModelTierSchema,
+  ModelCatalogEntrySchema,
+  ProviderModelCatalogSchema,
+  ModelsCatalogResponseSchema,
   TaskStatusSchema,
   TaskTableRowSchema,
   ProviderConfigSchema,
@@ -23,6 +30,12 @@ export type {
   RuntimeKind,
   TicketComment,
   Ticket,
+  RoleModelOverrides,
+  RoleModelMap,
+  ModelTier,
+  ModelCatalogEntry,
+  ProviderModelCatalog,
+  ModelsCatalogResponse,
   TaskStatus,
   TaskTableRow,
   ProviderConfig,
@@ -30,7 +43,13 @@ export type {
   OfficeConfig,
   AgentEvent,
 } from "./schemas.ts";
-export { createInitialOfficeState } from "./state.ts";
+export {
+  ALL_ROLE_IDS,
+  PROVIDER_DEFAULT_MODELS,
+  createInitialOfficeState,
+  normalizeRoleModels,
+  resolveModelForRole,
+} from "./state.ts";
 export type {
   AgentLiveState,
   PendingApproval,

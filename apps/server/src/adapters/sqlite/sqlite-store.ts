@@ -15,6 +15,7 @@ export class SQLiteOfficeStore implements EventStorePort, SecretStorePort {
   private readonly masterKey: Buffer;
   private stmtAppendEvent!: StatementSync;
   private stmtListEvents!: StatementSync;
+  private stmtListAllEvents!: StatementSync;
   private stmtSaveTicket!: StatementSync;
   private stmtGetTicket!: StatementSync;
   private stmtListTickets!: StatementSync;
@@ -83,6 +84,9 @@ export class SQLiteOfficeStore implements EventStorePort, SecretStorePort {
     this.stmtListEvents = this.db.prepare(
       `SELECT payload FROM events ORDER BY seq ASC LIMIT ?`
     );
+    this.stmtListAllEvents = this.db.prepare(
+      `SELECT payload FROM events ORDER BY seq ASC`
+    );
     this.stmtSaveTicket = this.db.prepare(
       `INSERT OR REPLACE INTO tickets (id, stage, updated_at, payload) VALUES (?, ?, ?, ?)`
     );
@@ -131,8 +135,12 @@ export class SQLiteOfficeStore implements EventStorePort, SecretStorePort {
     }
   }
 
-  listAll(limit: number = 1000): AgentEvent[] {
-    const rows = this.stmtListEvents.all(limit) as Array<{ payload: string }>;
+  listAll(limit?: number): AgentEvent[] {
+    const rows = (
+      typeof limit === "number" && Number.isFinite(limit) && limit > 0
+        ? this.stmtListEvents.all(limit)
+        : this.stmtListAllEvents.all()
+    ) as Array<{ payload: string }>;
     return rows.map((r) => AgentEventSchema.parse(JSON.parse(r.payload)));
   }
 

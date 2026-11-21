@@ -4,14 +4,30 @@ import path from "node:path";
 import { WebSocketServer, WebSocket } from "ws";
 import {
   ProviderIdSchema,
+  RoleModelOverridesSchema,
   RuntimeKindSchema,
+  type AgentRoleId,
+  type ProviderId,
+  type ProviderModelCatalog,
   type RuntimeKind,
   type TicketSize,
 } from "@agent-office/protocol";
 import type { OfficeOrchestrator } from "../../application/orchestrator.ts";
-import { MANAGED_SECRET_KEY_SET } from "../../domain/providers.ts";
-import type { SecretStorePort } from "../../ports/index.ts";
+import {
+  ALL_PROVIDER_IDS,
+  mergeCuratedAndDiscoveredModels,
+  validateModelString,
+} from "../../domain/model-catalog.ts";
+import {
+  MANAGED_SECRET_KEY_SET,
+  PROVIDER_METADATA,
+} from "../../domain/providers.ts";
+import type {
+  ModelDiscoveryPort,
+  SecretStorePort,
+} from "../../ports/index.ts";
 import { probeJcodeAuthStatus } from "../runtimes/jcode-runtime.ts";
+import { createModelDiscoveryAdapter } from "../runtimes/model-discovery.ts";
 import { loadJsonlFixture } from "../runtimes/scripted-runtime.ts";
 
 const DEFAULT_MAX_BODY_BYTES = 1_048_576;
@@ -68,7 +84,7 @@ function sendJson(
   res.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
     "access-control-allow-origin": "*",
-    "access-control-allow-methods": "GET,POST,OPTIONS",
+    "access-control-allow-methods": "GET,POST,PATCH,OPTIONS",
     "access-control-allow-headers": "content-type,authorization",
   });
   res.end(JSON.stringify(payload));
@@ -87,6 +103,10 @@ function resolveCacheControl(pathname: string, ext: string): string {
   return "no-cache";
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
 export interface OfficeServerHandle {
   server: http.Server;
   port: number;
@@ -101,8 +121,12 @@ export async function startOfficeHttpServer(args: {
   host?: string;
   port?: number;
   accessToken?: string;
+  modelDiscovery?: ModelDiscoveryPort;
 }): Promise<OfficeServerHandle> {
   const { orchestrator, secrets, fixturesDir, staticDir } = args;
+  const modelDiscovery =
+    args.modelDiscovery ??
+    createModelDiscoveryAdapter(secrets, orchestrator.getConfig().providers);
   const resolvedStaticDir = staticDir ? path.resolve(staticDir) : null;
   const host = args.host ?? orchestrator.getConfig().office.host ?? "127.0.0.1";
   const requestedPort = args.port ?? orchestrator.getConfig().office.port ?? 4173;
@@ -113,6 +137,29 @@ export async function startOfficeHttpServer(args: {
       `Binding to non-loopback host "${host}" requires OFFICE_ACCESS_TOKEN to be set`
     );
   }
+
+  const buildProviderCatalog = async (
+    provider: ProviderId,
+    forceRefresh: boolean
+  ): Promise<ProviderModelCatalog> => {
+    const snap = orchestrator.getSnapshot();
+    const discovery = await modelDiscovery.discoverModels(provider, {
+      forceRefresh,
+    });
+    const isCurrent = provider === snap.activeProvider;
+    return {
+      provider,
+      defaultModel: PROVIDER_METADATA[provider].defaultModel,
+      activeModel: isCurrent ? snap.activeModel ?? null : null,
+      roleModels: isCurrent ? snap.roleModels : {},
+      source: discovery.source,
+      models: mergeCuratedAndDiscoveredModels(
+        provider,
+        discovery.discoveredIds
+      ),
+      discoveredAt: discovery.discoveredAt,
+    };
+  };
 
   const server = http.createServer(async (req, res) => {
     try {
@@ -155,9 +202,62 @@ export async function startOfficeHttpServer(args: {
           activeProvider: snap.activeProvider,
           activeRuntime: snap.activeRuntime,
           activeModel: snap.activeModel ?? null,
+          roleModels: snap.roleModels,
           configuredKeys: secrets.listConfiguredKeys(),
           jcodeAuth,
           providers: orchestrator.getConfig().providers,
+        });
+        return;
+      }
+
+      if (req.method === "GET" && url.pathname === "/api/models") {
+        const forceRefresh = url.searchParams.get("refresh") === "1";
+        const snap = orchestrator.getSnapshot();
+        const catalogs = await Promise.all(
+          ALL_PROVIDER_IDS.map((providerId) =>
+            buildProviderCatalog(providerId, forceRefresh)
+          )
+        );
+        const providers = {} as Record<ProviderId, ProviderModelCatalog>;
+        for (const cat of catalogs) {
+          providers[cat.provider] = cat;
+        }
+        sendJson(res, 200, {
+          activeProvider: snap.activeProvider,
+          activeRuntime: snap.activeRuntime,
+          activeModel: snap.activeModel ?? null,
+          roleModels: snap.roleModels,
+          providers,
+        });
+        return;
+      }
+
+      const providerModelsMatch = url.pathname.match(
+        /^\/api\/providers\/([^/]+)\/models$/
+      );
+      if (req.method === "GET" && providerModelsMatch) {
+        let rawProvider = "";
+        try {
+          rawProvider = decodeURIComponent(providerModelsMatch[1] ?? "");
+        } catch {
+          sendJson(res, 400, { error: "Invalid provider id" });
+          return;
+        }
+        const parsedProvider = ProviderIdSchema.safeParse(rawProvider);
+        if (!parsedProvider.success) {
+          sendJson(res, 400, { error: "Invalid provider id" });
+          return;
+        }
+        const forceRefresh = url.searchParams.get("refresh") === "1";
+        const snap = orchestrator.getSnapshot();
+        const catalog = await buildProviderCatalog(
+          parsedProvider.data,
+          forceRefresh
+        );
+        sendJson(res, 200, {
+          ...catalog,
+          activeProvider: snap.activeProvider,
+          activeRuntime: snap.activeRuntime,
         });
         return;
       }
@@ -171,6 +271,7 @@ export async function startOfficeHttpServer(args: {
           return;
         }
         secrets.setSecret(keyName, value);
+        modelDiscovery.clearCache();
         sendJson(res, 200, {
           ok: true,
           configuredKeys: secrets.listConfiguredKeys(),
@@ -240,20 +341,37 @@ export async function startOfficeHttpServer(args: {
           runtime = parsedRuntime.data;
         }
         let model: string | null | undefined;
-        if (body["model"] !== undefined && body["model"] !== null) {
-          if (typeof body["model"] !== "string") {
-            sendJson(res, 400, { error: "Invalid model name" });
+        if (body["model"] !== undefined) {
+          const modelCheck = validateModelString(body["model"]);
+          if (!modelCheck.ok) {
+            sendJson(res, 400, { error: modelCheck.error });
             return;
           }
-          model = body["model"];
-        } else if (body["model"] === null) {
-          model = null;
+          model = modelCheck.value;
+        }
+        let roleModels:
+          | Partial<Record<AgentRoleId, string | null>>
+          | undefined;
+        if (body["roleModels"] !== undefined) {
+          if (!isPlainObject(body["roleModels"])) {
+            sendJson(res, 400, { error: "Invalid roleModels map" });
+            return;
+          }
+          const parsedRoles = RoleModelOverridesSchema.safeParse(
+            body["roleModels"]
+          );
+          if (!parsedRoles.success) {
+            sendJson(res, 400, { error: "Invalid roleModels map" });
+            return;
+          }
+          roleModels = parsedRoles.data;
         }
         try {
           const event = orchestrator.setActiveProvider(
             parsedProvider.data,
             runtime,
-            model
+            model,
+            roleModels
           );
           sendJson(res, 200, { ok: true, event });
         } catch (err) {
@@ -262,6 +380,66 @@ export async function startOfficeHttpServer(args: {
             err instanceof Error ? err.message : String(err)
           );
         }
+        return;
+      }
+
+      if (
+        (req.method === "POST" || req.method === "PATCH") &&
+        (url.pathname === "/api/provider/models" ||
+          (req.method === "POST" && url.pathname === "/api/models"))
+      ) {
+        const body = await readJsonBody(req);
+        let model: string | null | undefined;
+        if (body["model"] !== undefined) {
+          const modelCheck = validateModelString(body["model"]);
+          if (!modelCheck.ok) {
+            sendJson(res, 400, { error: modelCheck.error });
+            return;
+          }
+          model = modelCheck.value;
+        }
+
+        let roleModels:
+          | Partial<Record<AgentRoleId, string | null>>
+          | undefined;
+        if (body["roleModels"] !== undefined) {
+          if (!isPlainObject(body["roleModels"])) {
+            sendJson(res, 400, { error: "Invalid roleModels override map" });
+            return;
+          }
+          const parsedRoles = RoleModelOverridesSchema.safeParse(
+            body["roleModels"]
+          );
+          if (!parsedRoles.success) {
+            sendJson(res, 400, { error: "Invalid roleModels override map" });
+            return;
+          }
+          roleModels = parsedRoles.data;
+        }
+
+        let resetRoles: boolean | undefined;
+        if (body["resetRoles"] !== undefined) {
+          if (typeof body["resetRoles"] !== "boolean") {
+            sendJson(res, 400, { error: "resetRoles must be a boolean" });
+            return;
+          }
+          resetRoles = body["resetRoles"];
+        }
+
+        const event = orchestrator.setModelConfig({
+          model,
+          roleModels,
+          resetRoles,
+        });
+        const snap = orchestrator.getSnapshot();
+        sendJson(res, 200, {
+          ok: true,
+          activeProvider: snap.activeProvider,
+          activeRuntime: snap.activeRuntime,
+          activeModel: snap.activeModel ?? null,
+          roleModels: snap.roleModels,
+          event,
+        });
         return;
       }
 

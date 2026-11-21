@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
-import type { TicketSize } from "@agent-office/protocol";
+import type { AgentRoleId, TicketSize } from "@agent-office/protocol";
 import { useOfficeStore } from "../store/office-store.ts";
+import { PROVIDER_META_BY_ID } from "../store/provider-catalog.ts";
 import { ModalDialog } from "./ModalDialog.tsx";
 
 export interface DispatchTicketModalProps {
@@ -14,8 +15,26 @@ const DispatchTicketModalContent: React.FC<{ onClose: () => void }> = ({
   const activeProvider = useOfficeStore((s) => s.snapshot.activeProvider);
   const activeRuntime = useOfficeStore((s) => s.snapshot.activeRuntime);
   const activeModel = useOfficeStore((s) => s.snapshot.activeModel);
+  const catalogDefault = useOfficeStore(
+    (s) =>
+      s.modelCatalogByProvider[s.snapshot.activeProvider]?.defaultModel ?? null
+  );
+  const roleOverrideCount = useOfficeStore((s) => {
+    let count = 0;
+    const rm = s.snapshot.roleModels;
+    if (rm) {
+      for (const k in rm) {
+        if (rm[k as AgentRoleId]) count += 1;
+      }
+    }
+    return count;
+  });
   const submitTicket = useOfficeStore((s) => s.submitTicket);
   const clearError = useOfficeStore((s) => s.clearError);
+  const effectiveDefaultModel =
+    activeModel ??
+    catalogDefault ??
+    PROVIDER_META_BY_ID[activeProvider].defaultModel;
 
   const [title, setTitle] = useState("Add multiply(a, b) to src/math.ts");
   const [description, setDescription] = useState(
@@ -172,8 +191,11 @@ const DispatchTicketModalContent: React.FC<{ onClose: () => void }> = ({
               </option>
               <option value="live">
                 Live Single Provider ({activeProvider.toUpperCase()} via{" "}
-                {activeRuntime}
-                {activeModel ? `, ${activeModel}` : ""})
+                {activeRuntime}, {effectiveDefaultModel}
+                {roleOverrideCount > 0
+                  ? `, +${roleOverrideCount} role overrides`
+                  : ""}
+                )
               </option>
             </select>
           </div>

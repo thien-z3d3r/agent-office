@@ -503,6 +503,19 @@ select optgroup {
   min-width: 0;
 }
 
+.dock-models {
+  gap: 6px;
+  max-width: 100%;
+}
+
+.dock-model-chip {
+  max-width: 170px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.6875rem;
+}
+
 .banner-stack {
   grid-area: banner;
   justify-self: center;
@@ -703,6 +716,28 @@ select optgroup {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.worker-model-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin: 2px 0;
+  min-width: 0;
+}
+
+.worker-model-chip {
+  font-size: 0.6875rem;
+  padding: 1px 5px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.worker-model-tag {
+  font-size: 0.6875rem;
+  font-weight: 800;
+  color: var(--muted);
 }
 
 .waiting-alert {
@@ -1203,6 +1238,146 @@ select optgroup {
   gap: 12px;
 }
 
+.modal-tabs {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 16px;
+  border-bottom: 3px solid var(--ink);
+  background: var(--paper);
+}
+
+.modal-tabpanel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.credentials-model-summary {
+  flex-wrap: wrap;
+  justify-content: space-between;
+}
+
+.credentials-model-text {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+.catalog-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.catalog-provider-field {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.catalog-source-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.model-catalog-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.model-option-row {
+  width: 100%;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 9px 11px;
+  border-radius: 10px;
+  border: 2px solid var(--ink);
+  background: var(--surface-input);
+  color: var(--ink);
+  font-size: 0.8125rem;
+}
+
+.model-option-row:hover:not(:disabled),
+.model-option-row.selected {
+  background: var(--paper-2);
+  box-shadow: 0 2px 0 var(--ink);
+}
+
+.model-option-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.model-option-meta {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.role-overrides-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.role-overrides-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.role-override-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border: 2px solid var(--ink);
+  border-radius: 10px;
+  background: var(--paper-2);
+}
+
+.role-override-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.role-override-header label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.8125rem;
+  font-weight: 800;
+}
+
+.role-custom-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.role-custom-row .input-control {
+  flex: 1 1 180px;
+}
+
 @media (max-width: 800px), (max-height: 540px) {
   #hud,
   #hud.no-side {
@@ -1248,6 +1423,11 @@ select optgroup {
     white-space: normal;
     text-align: center;
   }
+  .dock-model-chip {
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
   .spend-controls .btn {
     white-space: normal;
     text-align: center;
@@ -1279,7 +1459,10 @@ select optgroup {
     grid-template-columns: 1fr;
   }
   .secret-input-row,
-  .active-provider-header {
+  .active-provider-header,
+  .catalog-toolbar,
+  .role-overrides-header,
+  .model-override-row {
     flex-wrap: wrap;
   }
   .backdrop {

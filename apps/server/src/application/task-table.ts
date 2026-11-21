@@ -1,13 +1,16 @@
-import type {
-  AgentRoleId,
-  ProviderId,
-  TaskTableRow,
-  Ticket,
+import {
+  resolveModelForRole,
+  type AgentRoleId,
+  type ProviderId,
+  type TaskTableRow,
+  type Ticket,
 } from "@agent-office/protocol";
 
 export function buildTaskTableForTicket(
   ticket: Ticket,
-  activeProvider: ProviderId
+  activeProvider: ProviderId,
+  activeModel: string | null = null,
+  roleModels: Partial<Record<AgentRoleId, string>> = {}
 ): TaskTableRow[] {
   const now = Date.now();
   const specs: Array<{
@@ -71,6 +74,12 @@ export function buildTaskTableForTicket(
     role: s.role,
     provider: activeProvider,
     subAgentId: `sub-${activeProvider}-${s.role}-${idx + 1}`,
+    model: resolveModelForRole({
+      provider: activeProvider,
+      roleId: s.role,
+      activeModel,
+      roleModels,
+    }),
     title: s.title,
     artifactOrCmd: s.artifactOrCmd,
     status: "queued" as const,
@@ -82,9 +91,16 @@ export function buildTaskTableForTicket(
 export function buildSyncedTaskTableRows(
   ticket: Ticket,
   activeProvider: ProviderId,
-  existingTaskTable?: Record<string, TaskTableRow>
+  existingTaskTable?: Record<string, TaskTableRow>,
+  activeModel: string | null = null,
+  roleModels: Partial<Record<AgentRoleId, string>> = {}
 ): TaskTableRow[] {
-  const rows = buildTaskTableForTicket(ticket, activeProvider);
+  const rows = buildTaskTableForTicket(
+    ticket,
+    activeProvider,
+    activeModel,
+    roleModels
+  );
   const activeIdx = ticket.assignee
     ? rows.findIndex((r) => r.role === ticket.assignee)
     : -1;
@@ -141,7 +157,8 @@ export function buildUpdatedTaskRow(
   role: AgentRoleId,
   activeProvider: ProviderId,
   status: TaskTableRow["status"],
-  outputPreview?: string
+  outputPreview?: string,
+  resolvedModel?: string
 ): TaskTableRow | null {
   const row = Object.values(taskTable).find(
     (r) => r.ticketId === ticketId && r.role === role
@@ -151,6 +168,10 @@ export function buildUpdatedTaskRow(
     ...row,
     provider: activeProvider,
     subAgentId: `sub-${activeProvider}-${row.role}-${row.order}`,
+    model:
+      resolvedModel ??
+      row.model ??
+      resolveModelForRole({ provider: activeProvider, roleId: role }),
     status,
     outputPreview: outputPreview ?? row.outputPreview,
     updatedAt: Date.now(),

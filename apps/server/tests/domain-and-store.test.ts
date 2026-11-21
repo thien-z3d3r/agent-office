@@ -25,9 +25,16 @@ import {
 } from "../src/domain/ticket-machine.ts";
 import { canRoleUseTool } from "../src/domain/roles.ts";
 import {
+  PROVIDER_METADATA,
   resolveProviderDefaults,
   validateRuntimeForProvider,
 } from "../src/domain/providers.ts";
+import {
+  ALL_PROVIDER_IDS,
+  CURATED_MODEL_CATALOG,
+  mergeCuratedAndDiscoveredModels,
+  validateModelString,
+} from "../src/domain/model-catalog.ts";
 import { SQLiteOfficeStore } from "../src/adapters/sqlite/sqlite-store.ts";
 import { loadJsonlFixture } from "../src/adapters/runtimes/scripted-runtime.ts";
 
@@ -387,4 +394,48 @@ test("File-backed SQLiteOfficeStore enables WAL mode and listConfiguredKeys hand
     if (prevOpenAi !== undefined) process.env["OPENAI_API_KEY"] = prevOpenAi;
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
+});
+
+test("CURATED_MODEL_CATALOG covers all 6 providers with 1 matching default each and merges live discoveries cleanly", () => {
+  assert.equal(ALL_PROVIDER_IDS.length, 6);
+  for (const provider of ALL_PROVIDER_IDS) {
+    const models = CURATED_MODEL_CATALOG[provider];
+    assert.ok(models.length >= 3, `${provider} should have >= 3 curated models`);
+    const defaults = models.filter((m) => m.isDefault);
+    assert.equal(defaults.length, 1, `${provider} must have exactly 1 default`);
+    assert.equal(defaults[0]?.id, PROVIDER_METADATA[provider].defaultModel);
+    for (const entry of models) {
+      assert.equal(entry.source, "curated");
+      assert.equal(entry.available, true);
+      assert.ok(entry.label.length > 0 && entry.capabilitySummary.length > 0);
+    }
+  }
+
+  const merged = mergeCuratedAndDiscoveredModels("antigravity", [
+    "default",
+    "gemini-2.5-pro",
+    "gemini-3-flash",
+    "claude-opus-5-5-thinking-custom",
+    "claude-opus-5-5-thinking-custom",
+  ]);
+  const defaultMatches = merged.filter((m) => m.id === "gemini-2.5-pro");
+  assert.equal(defaultMatches.length, 1);
+  assert.equal(defaultMatches[0]?.source, "curated");
+  assert.equal(merged.some((m) => m.id === "default"), false);
+
+  const liveAdded = merged.find(
+    (m) => m.id === "claude-opus-5-5-thinking-custom"
+  );
+  assert.ok(liveAdded);
+  assert.equal(liveAdded.source, "live");
+  assert.equal(liveAdded.tier, "reasoning");
+
+  assert.deepEqual(validateModelString(null), { ok: true, value: null });
+  assert.deepEqual(validateModelString("   "), { ok: true, value: null });
+  assert.deepEqual(validateModelString("  gpt-5.4  "), {
+    ok: true,
+    value: "gpt-5.4",
+  });
+  assert.equal(validateModelString(123).ok, false);
+  assert.equal(validateModelString("bad\nmodel").ok, false);
 });

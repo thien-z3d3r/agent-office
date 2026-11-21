@@ -7,9 +7,13 @@ import YAML from "yaml";
 import {
   AgentEventSchema,
   OfficeConfigSchema,
+  PROVIDER_DEFAULT_MODELS,
+  RoleModelOverridesSchema,
   TicketSchema,
   createInitialOfficeState,
+  normalizeRoleModels,
   officeReducer,
+  resolveModelForRole,
   type AgentEvent,
 } from "../src/index.ts";
 
@@ -436,3 +440,129 @@ test("officeReducer task.table.set protects active-ticket agents and terminal-ti
   assert.equal(afterT3Table.agents.be.currentTicketId, "T-2");
   assert.equal(afterT3Table.agents.be.targetZone, "dev_pod_be");
 });
+
+test("RoleModelOverridesSchema, normalizeRoleModels, and resolveModelForRole enforce precedence and strict keys", () => {
+  const valid = RoleModelOverridesSchema.safeParse({
+    tl: "claude-opus-4-5-20251101",
+    fe: null,
+  });
+  assert.equal(valid.success, true);
+
+  const invalidKey = RoleModelOverridesSchema.safeParse({
+    unknown_role: "gpt-5",
+  });
+  assert.equal(invalidKey.success, false);
+
+  const invalidNewline = RoleModelOverridesSchema.safeParse({
+    tl: "gpt-5\nbad",
+  });
+  assert.equal(invalidNewline.success, false);
+
+  assert.deepEqual(
+    normalizeRoleModels({
+      tl: "  claude-opus-4-5-20251101  ",
+      fe: null,
+      be: undefined,
+    }),
+    { tl: "claude-opus-4-5-20251101" }
+  );
+
+  assert.equal(
+    resolveModelForRole({
+      provider: "claude",
+      roleId: "tl",
+      activeModel: "claude-haiku-4-5-20251001",
+      roleModels: { tl: "claude-opus-4-5-20251101" },
+    }),
+    "claude-opus-4-5-20251101"
+  );
+  assert.equal(
+    resolveModelForRole({
+      provider: "claude",
+      roleId: "fe",
+      activeModel: "claude-haiku-4-5-20251001",
+      roleModels: { tl: "claude-opus-4-5-20251101" },
+    }),
+    "claude-haiku-4-5-20251001"
+  );
+  assert.equal(
+    resolveModelForRole({
+      provider: "openai_oauth",
+      roleId: "be",
+      activeModel: null,
+      roleModels: {},
+    }),
+    PROVIDER_DEFAULT_MODELS.openai_oauth
+  );
+  assert.equal(PROVIDER_DEFAULT_MODELS.openai_oauth, "gpt-5.4");
+});
+
+test("officeReducer resets roleModels on cross-provider switch, preserves on same-provider runtime switch, and propagates task row models", () => {
+  let state = createInitialOfficeState();
+  assert.deepEqual(state.roleModels, {});
+  assert.equal(state.agents.tl.model, null);
+
+  state = officeReducer(state, {
+    id: "ev-models-1",
+    ts: 1000,
+    t: "provider.changed",
+    provider: "claude",
+    runtime: "ai-sdk",
+    model: "claude-sonnet-4-5-20250929",
+    roleModels: { tl: "claude-opus-4-5-20251101", fe: null },
+  });
+  assert.equal(state.activeProvider, "claude");
+  assert.equal(state.activeModel, "claude-sonnet-4-5-20250929");
+  assert.deepEqual(state.roleModels, { tl: "claude-opus-4-5-20251101" });
+
+  // Same-provider runtime change without roleModels preserves existing roleModels.
+  state = officeReducer(state, {
+    id: "ev-models-2",
+    ts: 1010,
+    t: "provider.changed",
+    provider: "claude",
+    runtime: "claude-agent-sdk",
+    model: "claude-sonnet-4-5-20250929",
+  });
+  assert.equal(state.activeRuntime, "claude-agent-sdk");
+  assert.deepEqual(state.roleModels, { tl: "claude-opus-4-5-20251101" });
+
+  // Cross-provider switch without roleModels clears stale overrides.
+  state = officeReducer(state, {
+    id: "ev-models-3",
+    ts: 1020,
+    t: "provider.changed",
+    provider: "gemini",
+    runtime: "ai-sdk",
+  });
+  assert.equal(state.activeProvider, "gemini");
+  assert.equal(state.activeModel, null);
+  assert.deepEqual(state.roleModels, {});
+
+  // Task table row model propagates to agent live state.
+  state = officeReducer(state, {
+    id: "ev-task-model",
+    ts: 1030,
+    t: "task.table.set",
+    ticketId: "T-M1",
+    rows: [
+      {
+        id: "T-M1:tl",
+        ticketId: "T-M1",
+        order: 1,
+        role: "tl",
+        provider: "gemini",
+        subAgentId: "sub-gemini-tl-1",
+        model: "gemini-2.5-pro",
+        title: "Design",
+        artifactOrCmd: "docs/adr.md",
+        status: "running",
+        outputPreview: "",
+        updatedAt: 1030,
+      },
+    ],
+  });
+  assert.equal(state.taskTable["T-M1:tl"]?.model, "gemini-2.5-pro");
+  assert.equal(state.agents.tl.model, "gemini-2.5-pro");
+});
+

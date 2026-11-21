@@ -1,7 +1,10 @@
 import type {
   AgentEvent,
+  AgentRoleId,
+  ModelsCatalogResponse,
   OfficeStateSnapshot,
   ProviderId,
+  ProviderModelCatalog,
   RoleConfig,
   RuntimeKind,
   TicketSize,
@@ -18,6 +21,7 @@ export interface OfficeSettingsResponse {
   activeProvider?: ProviderId;
   activeRuntime?: RuntimeKind;
   activeModel?: string | null;
+  roleModels?: Partial<Record<AgentRoleId, string>>;
   configuredKeys: Record<string, boolean>;
   jcodeAuth: Record<string, JcodeAuthInfo>;
 }
@@ -57,9 +61,33 @@ export async function fetchOfficeSettings(): Promise<OfficeSettingsResponse> {
     activeProvider: data.activeProvider,
     activeRuntime: data.activeRuntime,
     activeModel: data.activeModel ?? null,
+    roleModels: data.roleModels ?? {},
     configuredKeys: data.configuredKeys ?? {},
     jcodeAuth: data.jcodeAuth ?? {},
   };
+}
+
+export async function fetchAllProviderModels(
+  refresh = false
+): Promise<ModelsCatalogResponse> {
+  const res = await ensureOk(
+    await fetch(`/api/models${refresh ? "?refresh=1" : ""}`)
+  );
+  return (await res.json()) as ModelsCatalogResponse;
+}
+
+export async function fetchProviderModels(
+  providerId: ProviderId,
+  refresh = false
+): Promise<ProviderModelCatalog> {
+  const res = await ensureOk(
+    await fetch(
+      `/api/providers/${encodeURIComponent(providerId)}/models${
+        refresh ? "?refresh=1" : ""
+      }`
+    )
+  );
+  return (await res.json()) as ProviderModelCatalog;
 }
 
 export async function postSecretKey(keyName: string, value: string): Promise<void> {
@@ -110,15 +138,18 @@ export type ProviderChangedEvent = Extract<
 export async function postActiveProvider(
   provider: ProviderId,
   runtime?: RuntimeKind,
-  model?: string | null
+  model?: string | null,
+  roleModels?: Partial<Record<AgentRoleId, string | null>>
 ): Promise<ProviderChangedEvent | null> {
   const body: {
     provider: ProviderId;
     runtime?: RuntimeKind;
     model?: string | null;
+    roleModels?: Partial<Record<AgentRoleId, string | null>>;
   } = { provider };
   if (runtime !== undefined) body.runtime = runtime;
   if (model !== undefined) body.model = model;
+  if (roleModels !== undefined) body.roleModels = roleModels;
   const res = await ensureOk(
     await fetch("/api/provider", {
       method: "POST",
@@ -135,6 +166,39 @@ export async function postActiveProvider(
   } catch {
   }
   return null;
+}
+
+export async function postProviderModels(input: {
+  model?: string | null;
+  roleModels?: Partial<Record<AgentRoleId, string | null>>;
+  resetRoles?: boolean;
+}): Promise<{
+  activeModel: string | null;
+  roleModels: Partial<Record<AgentRoleId, string>>;
+  event: ProviderChangedEvent | null;
+}> {
+  const res = await ensureOk(
+    await fetch("/api/provider/models", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    })
+  );
+  const data = (await res.json()) as {
+    activeModel?: string | null;
+    roleModels?: Partial<Record<AgentRoleId, string>>;
+    event?: Partial<ProviderChangedEvent>;
+  };
+  const ev = data.event;
+  const validEvent =
+    ev && ev.t === "provider.changed" && ev.provider && ev.runtime
+      ? (ev as ProviderChangedEvent)
+      : null;
+  return {
+    activeModel: data.activeModel ?? null,
+    roleModels: data.roleModels ?? {},
+    event: validEvent,
+  };
 }
 
 type ServerMessage =

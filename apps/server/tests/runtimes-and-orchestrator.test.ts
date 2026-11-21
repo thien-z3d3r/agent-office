@@ -26,6 +26,9 @@ import {
   JcodeRuntimeAdapter,
   probeJcodeAuthStatus,
 } from "../src/adapters/runtimes/jcode-runtime.ts";
+import {
+  createModelDiscoveryAdapter,
+} from "../src/adapters/runtimes/model-discovery.ts";
 import { AiSdkRuntimeAdapter } from "../src/adapters/runtimes/ai-sdk-runtime.ts";
 import {
   ClaudeAgentSdkRuntimeAdapter,
@@ -530,6 +533,7 @@ test("stage-runner preserves startedAt < endedAt and coalesces agent.text deltas
       activeProvider: "kimi_code",
       activeRuntime: "scripted",
       activeModel: null,
+      roleModels: {},
       agents: {} as StageRunnerContext["getSnapshot"] extends () => infer S
         ? S extends { agents: infer A }
           ? A
@@ -1207,5 +1211,428 @@ test("OfficeOrchestrator.setActiveProvider preserves Done ticket rows and active
   releaseBe();
   const t2Done = await t2Res.completion;
   assert.equal(t2Done.stage, "Done");
+  store.close();
+});
+
+test("createModelDiscoveryAdapter caches live results, deduplicates concurrent calls, and falls back to curated on timeout/missing key", async () => {
+  const store = new SQLiteOfficeStore(":memory:");
+  store.setSecret("ANTHROPIC_API_KEY", "sk-ant-live-key");
+
+  let now = 1_000_000;
+  let fetchCalls = 0;
+  let jcodeCalls = 0;
+  let shouldFailFetch = false;
+
+  const discovery = createModelDiscoveryAdapter(store, undefined, {
+    nowFn: () => now,
+    ttlMs: 30_000,
+    errorTtlMs: 5_000,
+    execFileFn: async (_bin, args) => {
+      jcodeCalls += 1;
+      assert.equal(args[0], "model");
+      assert.equal(args[1], "list");
+      return {
+        stdout: JSON.stringify({
+          models: ["default", "gemini-2.5-pro", "gemini-3-flash"],
+          routes: [
+            { model: "gemini-2.5-pro", available: true },
+            { model: "gemini-3-flash", available: true },
+            { model: "unavailable-model", available: false },
+          ],
+        }),
+        stderr: "",
+      };
+    },
+    fetchFn: async (url) => {
+      fetchCalls += 1;
+      assert.equal(url, "https://api.anthropic.com/v1/models");
+      if (shouldFailFetch) {
+        throw new Error("Simulated timeout");
+      }
+      return new Response(
+        JSON.stringify({
+          data: [
+            { id: "claude-sonnet-4-5-20250929" },
+            { id: "claude-opus-4-6-preview" },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    },
+  });
+
+  // Concurrent calls for the same provider share a single in-flight probe.
+  const [c1, c2] = await Promise.all([
+    discovery.discoverModels("claude"),
+    discovery.discoverModels("claude"),
+  ]);
+  assert.equal(fetchCalls, 1);
+  assert.equal(c1.source, "live");
+  assert.deepEqual(c1.discoveredIds, [
+    "claude-sonnet-4-5-20250929",
+    "claude-opus-4-6-preview",
+  ]);
+  assert.deepEqual(c2, c1);
+
+  // Subsequent call within TTL hits cache.
+  now += 10_000;
+  const c3 = await discovery.discoverModels("claude");
+  assert.equal(fetchCalls, 1);
+  assert.deepEqual(c3, c1);
+
+  // forceRefresh bypasses TTL cache.
+  const c4 = await discovery.discoverModels("claude", { forceRefresh: true });
+  assert.equal(fetchCalls, 2);
+  assert.equal(c4.source, "live");
+
+  // clearCache forces re-fetch and handles error fallback to curated.
+  shouldFailFetch = true;
+  discovery.clearCache("claude");
+  const fallback = await discovery.discoverModels("claude");
+  assert.equal(fetchCalls, 3);
+  assert.equal(fallback.source, "curated");
+  assert.deepEqual(fallback.discoveredIds, []);
+
+  // Missing API key returns curated immediately with zero network calls.
+  const openaiNoKey = await discovery.discoverModels("openai_api");
+  assert.equal(fetchCalls, 3);
+  assert.equal(openaiNoKey.source, "curated");
+
+  // jcode-oauth provider parses available routes and drops unavailable/"default".
+  const ag = await discovery.discoverModels("antigravity");
+  assert.equal(jcodeCalls, 1);
+  assert.equal(ag.source, "live");
+  assert.deepEqual(ag.discoveredIds, ["gemini-2.5-pro", "gemini-3-flash"]);
+
+  store.close();
+});
+
+test("HTTP model catalog and override endpoints validate inputs, persist across SQLite replay, and reset on provider switch", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ao-http-models-"));
+  const dbPath = path.join(tmpDir, "office.sqlite3");
+
+  const startSystem = async () => {
+    const sys = createOfficeSystem({ dbPath, stepDelayMs: 5 });
+    const discovery = createModelDiscoveryAdapter(sys.store, sys.config.providers, {
+      execFileFn: async () => ({
+        stdout: JSON.stringify({
+          routes: [
+            { model: "gemini-2.5-pro", available: true },
+            { model: "gemini-live-extra", available: true },
+          ],
+        }),
+        stderr: "",
+      }),
+      fetchFn: async () =>
+        new Response(
+          JSON.stringify({
+            data: [{ id: "claude-opus-4-5-20251101" }, { id: "claude-live-new" }],
+          }),
+          { status: 200 }
+        ),
+    });
+    const srv = await startOfficeHttpServer({
+      orchestrator: sys.orchestrator,
+      secrets: sys.store,
+      fixturesDir: path.join(rootDir, "apps/server/fixtures"),
+      host: "127.0.0.1",
+      port: 0,
+      modelDiscovery: discovery,
+    });
+    return { sys, srv };
+  };
+
+  let ctx1 = await startSystem();
+  try {
+    const base = `http://127.0.0.1:${ctx1.srv.port}`;
+
+    // GET /api/models returns all 6 providers.
+    const allRes = await fetch(`${base}/api/models`);
+    assert.equal(allRes.status, 200);
+    const allJson = (await allRes.json()) as {
+      activeProvider: string;
+      providers: Record<string, { source: string; models: Array<{ id: string }> }>;
+    };
+    assert.equal(allJson.activeProvider, "antigravity");
+    assert.equal(Object.keys(allJson.providers).length, 6);
+    assert.equal(allJson.providers["antigravity"]?.source, "live");
+    assert.ok(
+      allJson.providers["antigravity"]?.models.some(
+        (m) => m.id === "gemini-live-extra"
+      )
+    );
+
+    // Invalid provider id returns 400.
+    const badProvRes = await fetch(`${base}/api/providers/bogus/models`);
+    assert.equal(badProvRes.status, 400);
+
+    // Switch to claude + set secret + verify live discovery & cache invalidation.
+    const secretRes = await fetch(`${base}/api/settings/secrets`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ keyName: "ANTHROPIC_API_KEY", value: "sk-ant-ok" }),
+    });
+    assert.equal(secretRes.status, 200);
+
+    const claudeCatalogRes = await fetch(`${base}/api/providers/claude/models`);
+    assert.equal(claudeCatalogRes.status, 200);
+    const claudeCatalog = (await claudeCatalogRes.json()) as {
+      source: string;
+      models: Array<{ id: string }>;
+    };
+    assert.equal(claudeCatalog.source, "live");
+    assert.ok(claudeCatalog.models.some((m) => m.id === "claude-live-new"));
+
+    // Invalid roleModels / model / resetRoles return 400.
+    const badRoleRes = await fetch(`${base}/api/provider/models`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ roleModels: { hacker: "bad-model" } }),
+    });
+    assert.equal(badRoleRes.status, 400);
+
+    const badResetRes = await fetch(`${base}/api/provider/models`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ resetRoles: "yes" }),
+    });
+    assert.equal(badResetRes.status, 400);
+
+    // Switch provider to claude and set default model + per-role overrides.
+    const switchRes = await fetch(`${base}/api/provider`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        provider: "claude",
+        runtime: "ai-sdk",
+        model: "claude-haiku-4-5-20251001",
+        roleModels: {
+          tl: "claude-opus-4-5-20251101",
+          fe: "claude-sonnet-4-5-20250929",
+        },
+      }),
+    });
+    assert.equal(switchRes.status, 200);
+
+    // Partial PATCH updates one role while keeping existing roleModels.
+    const patchRes = await fetch(`${base}/api/provider/models`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        roleModels: { be: "claude-opus-4-1-20250805", fe: null },
+      }),
+    });
+    assert.equal(patchRes.status, 200);
+    const patchJson = (await patchRes.json()) as {
+      activeModel: string | null;
+      roleModels: Record<string, string>;
+    };
+    assert.equal(patchJson.activeModel, "claude-haiku-4-5-20251001");
+    assert.deepEqual(patchJson.roleModels, {
+      tl: "claude-opus-4-5-20251101",
+      be: "claude-opus-4-1-20250805",
+    });
+
+    // Reject control characters and malformed percent-encoding with HTTP 400.
+    const badCtrlRes = await fetch(`${base}/api/provider/models`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "claude\x1b[31mevil" }),
+    });
+    assert.equal(badCtrlRes.status, 400);
+
+    const badUriRes = await fetch(`${base}/api/providers/%ZZ/models`);
+    assert.equal(badUriRes.status, 400);
+
+    // Same-provider runtime switch without model preserves activeModel and roleModels.
+    const sameProvRes = await fetch(`${base}/api/provider`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ provider: "claude", runtime: "jcode" }),
+    });
+    assert.equal(sameProvRes.status, 200);
+    assert.equal(
+      ctx1.sys.orchestrator.getSnapshot().activeModel,
+      "claude-haiku-4-5-20251001"
+    );
+
+    // Emit >2,000 events before a final provider.changed to verify full SQLite replay.
+    for (let i = 0; i < 2005; i += 1) {
+      ctx1.sys.store.append({
+        id: `replay-bulk-${i}`,
+        ts: Date.now() + i,
+        t: "agent.text",
+        agentId: "fe",
+        runId: "run-bulk",
+        delta: ".",
+      });
+    }
+    const postBulkRes = await fetch(`${base}/api/provider`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        provider: "claude",
+        runtime: "ai-sdk",
+        model: "claude-haiku-4-5-20251001",
+        roleModels: {
+          tl: "claude-opus-4-5-20251101",
+          be: "claude-opus-4-1-20250805",
+        },
+      }),
+    });
+    assert.equal(postBulkRes.status, 200);
+  } finally {
+    await ctx1.srv.close();
+    ctx1.sys.store.close();
+  }
+
+  // Reopen SQLite from disk and verify model + roleModels replay accurately.
+  const ctx2 = await startSystem();
+  try {
+    const base2 = `http://127.0.0.1:${ctx2.srv.port}`;
+    const settingsRes = await fetch(`${base2}/api/settings`);
+    assert.equal(settingsRes.status, 200);
+    const settings = (await settingsRes.json()) as {
+      activeProvider: string;
+      activeModel: string | null;
+      roleModels: Record<string, string>;
+    };
+    assert.equal(settings.activeProvider, "claude");
+    assert.equal(settings.activeModel, "claude-haiku-4-5-20251001");
+    assert.deepEqual(settings.roleModels, {
+      tl: "claude-opus-4-5-20251101",
+      be: "claude-opus-4-1-20250805",
+    });
+
+    // Switching to another provider clears stale overrides automatically.
+    const switchGemini = await fetch(`${base2}/api/provider`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ provider: "gemini", runtime: "ai-sdk" }),
+    });
+    assert.equal(switchGemini.status, 200);
+    const afterSwitch = ctx2.sys.orchestrator.getSnapshot();
+    assert.equal(afterSwitch.activeProvider, "gemini");
+    assert.equal(afterSwitch.activeModel, null);
+    assert.deepEqual(afterSwitch.roleModels, {});
+  } finally {
+    await ctx2.srv.close();
+    ctx2.sys.store.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("StageRunner and JcodeRuntimeAdapter pass resolved per-role -m <model> across all 8 roles on a single active provider", async () => {
+  const store = new SQLiteOfficeStore(":memory:");
+  store.setSecret("ANTHROPIC_API_KEY", "sk-ant-per-role");
+
+  const config = {
+    ...loadOfficeConfig(path.join(rootDir, "office.config.yaml")),
+    activeProvider: "claude" as const,
+    activeRuntime: "jcode" as const,
+    activeModel: "claude-haiku-4-5-20251001",
+    roleModels: {
+      em: "claude-sonnet-4-5-20250929",
+      pm: "claude-opus-4-1-20250805",
+      tl: "claude-opus-4-5-20251101",
+      fe: "claude-sonnet-4-5-20250929",
+      be: "claude-opus-4-5-20251101",
+      qa: "claude-sonnet-4-5-20250929",
+      reviewer: "claude-opus-4-1-20250805",
+      // devops intentionally unset to test fallback to activeModel
+    },
+  };
+
+  const spawnedCalls: Array<{
+    roleId: string;
+    cliArgs: string[];
+    modelFlag: string | undefined;
+  }> = [];
+
+  const jcodeAdapter = new JcodeRuntimeAdapter(
+    store,
+    "/home/skadi/.local/bin/jcode",
+    async function* ({ cliArgs }) {
+      const mIndex = cliArgs.indexOf("-m");
+      const modelFlag = mIndex >= 0 ? cliArgs[mIndex + 1] : undefined;
+      const roleMatch = cliArgs.join(" ").match(/--tools\s+\S+/);
+      spawnedCalls.push({
+        roleId: roleMatch ? roleMatch[0] : "",
+        cliArgs,
+        modelFlag,
+      });
+      yield JSON.stringify({ type: "assistant", text: "Stage completed" });
+      yield JSON.stringify({
+        type: "result",
+        usage: { input_tokens: 100, output_tokens: 50 },
+        cost_usd: 0.001,
+      });
+    }
+  );
+
+  const orch = new OfficeOrchestrator({
+    config,
+    store,
+    workspace: createMemoryWorkspace("/tmp/wt-per-role-models"),
+    runtimes: new Map([["jcode", jcodeAdapter]]),
+  });
+
+  // L-size FE ticket exercises em, pm, tl, fe, reviewer, qa, devops (7 roles).
+  const largeRes = await orch.submitTicket({
+    title: "Per-role model test L",
+    description: "Verify per-role -m flags",
+    size: "L",
+    authorRole: "fe",
+    mode: "live",
+    autoApproveMerge: true,
+  });
+  const largeDone = await largeRes.completion;
+  assert.equal(largeDone.stage, "Done");
+
+  // S-size BE ticket exercises be role as well.
+  const smallRes = await orch.submitTicket({
+    title: "Per-role model test S",
+    description: "Verify BE role override",
+    size: "S",
+    authorRole: "be",
+    mode: "live",
+    autoApproveMerge: true,
+  });
+  const smallDone = await smallRes.completion;
+  assert.equal(smallDone.stage, "Done");
+
+  const expectedByOrder = [
+    "claude-sonnet-4-5-20250929", // em
+    "claude-opus-4-1-20250805", // pm
+    "claude-opus-4-5-20251101", // tl
+    "claude-sonnet-4-5-20250929", // fe
+    "claude-opus-4-1-20250805", // reviewer
+    "claude-sonnet-4-5-20250929", // qa
+    "claude-haiku-4-5-20251001", // devops (falls back to activeModel)
+    "claude-sonnet-4-5-20250929", // em (ticket 2)
+    "claude-opus-4-5-20251101", // be
+    "claude-opus-4-1-20250805", // reviewer (ticket 2)
+    "claude-haiku-4-5-20251001", // devops (ticket 2)
+  ];
+  assert.deepEqual(
+    spawnedCalls.map((c) => c.modelFlag),
+    expectedByOrder
+  );
+
+  // Verify TaskTableRow.model records resolved models per role.
+  const snap = orch.getSnapshot();
+  assert.equal(
+    snap.taskTable[`${largeRes.ticket.id}-TASK-3`]?.model,
+    "claude-opus-4-5-20251101"
+  );
+  assert.equal(
+    snap.taskTable[`${largeRes.ticket.id}-TASK-7`]?.model,
+    "claude-haiku-4-5-20251001"
+  );
+  assert.equal(
+    snap.taskTable[`${smallRes.ticket.id}-TASK-2`]?.model,
+    "claude-opus-4-5-20251101"
+  );
+
   store.close();
 });

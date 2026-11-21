@@ -1,4 +1,11 @@
-import type { ProviderId, RuntimeKind } from "@agent-office/protocol";
+import {
+  resolveModelForRole as resolveProtocolModelForRole,
+  type AgentRoleId,
+  type ProviderId,
+  type RuntimeKind,
+} from "@agent-office/protocol";
+
+export type SettingsTab = "credentials" | "models";
 
 export interface FrontendProviderMeta {
   id: ProviderId;
@@ -64,7 +71,7 @@ export const PROVIDER_CATALOG: readonly FrontendProviderMeta[] = [
     authMode: "jcode-oauth",
     defaultRuntime: "jcode",
     compatibleRuntimes: ["jcode"],
-    defaultModel: "gpt-4.1",
+    defaultModel: "gpt-5.4",
     jcodeAuthKey: "openai",
     hint: "Uses local jcode ChatGPT OAuth login. Tokens stay inside jcode.",
   },
@@ -114,3 +121,20 @@ export const PROVIDER_META_BY_ID: Record<ProviderId, FrontendProviderMeta> =
     ProviderId,
     FrontendProviderMeta
   >;
+
+export function resolveModelForRole(args: {
+  provider: ProviderId;
+  roleId: AgentRoleId;
+  activeModel?: string | null;
+  roleModels?: Partial<Record<AgentRoleId, string | null>> | null;
+  catalogDefault?: string | null;
+}): string {
+  return resolveProtocolModelForRole({
+    provider: args.provider,
+    roleId: args.roleId,
+    activeModel: args.activeModel,
+    roleModels: args.roleModels,
+    defaultModel:
+      args.catalogDefault ?? PROVIDER_META_BY_ID[args.provider].defaultModel,
+  });
+}

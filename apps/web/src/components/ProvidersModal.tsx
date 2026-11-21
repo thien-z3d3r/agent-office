@@ -1,18 +1,22 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { ProviderId, RuntimeKind } from "@agent-office/protocol";
 import { useOfficeStore } from "../store/office-store.ts";
 import {
   PROVIDER_CATALOG,
   PROVIDER_META_BY_ID,
   RUNTIME_LABELS,
+  type SettingsTab,
 } from "../store/provider-catalog.ts";
 import { ModalDialog } from "./ModalDialog.tsx";
+import { ModelCatalogTab } from "./ModelCatalogTab.tsx";
 
 const JCODE_PROVIDERS = PROVIDER_CATALOG.map((p) => p.jcodeAuthKey);
 
 const API_KEY_PROVIDERS = PROVIDER_CATALOG.filter(
   (p) => p.authMode === "api-key" && p.secretKey
 );
+
+const TAB_ORDER: readonly SettingsTab[] = ["credentials", "models"];
 
 export interface ProvidersModalProps {
   open: boolean;
@@ -24,7 +28,23 @@ const ProvidersModalContent: React.FC<{ onClose: () => void }> = ({
 }) => {
   const activeProvider = useOfficeStore((s) => s.snapshot.activeProvider);
   const activeRuntime = useOfficeStore((s) => s.snapshot.activeRuntime);
-  const activeModel = useOfficeStore((s) => s.snapshot.activeModel);
+  const activeModel = useOfficeStore((s) => s.snapshot.activeModel ?? null);
+  const catalogDefault = useOfficeStore(
+    (s) =>
+      s.modelCatalogByProvider[s.snapshot.activeProvider]?.defaultModel ?? null
+  );
+  const roleOverrideCount = useOfficeStore((s) => {
+    let count = 0;
+    const rm = s.snapshot.roleModels;
+    if (rm) {
+      for (const k in rm) {
+        if (rm[k as keyof typeof rm]) count += 1;
+      }
+    }
+    return count;
+  });
+  const settingsTab = useOfficeStore((s) => s.settingsTab);
+  const setSettingsTab = useOfficeStore((s) => s.setSettingsTab);
   const configuredKeys = useOfficeStore((s) => s.configuredKeys);
   const jcodeAuth = useOfficeStore((s) => s.jcodeAuth);
   const setActiveProvider = useOfficeStore((s) => s.setActiveProvider);
@@ -33,7 +53,6 @@ const ProvidersModalContent: React.FC<{ onClose: () => void }> = ({
   const clearError = useOfficeStore((s) => s.clearError);
 
   const [keyDrafts, setKeyDrafts] = useState<Record<string, string>>({});
-  const [modelDraft, setModelDraft] = useState<string>(activeModel ?? "");
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [switchingProvider, setSwitchingProvider] = useState(false);
   const [loadingSettings, setLoadingSettings] = useState(false);
@@ -43,18 +62,31 @@ const ProvidersModalContent: React.FC<{ onClose: () => void }> = ({
   const [feedbackSuccess, setFeedbackSuccess] = useState<string | null>(null);
 
   const inputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const tabRefs = useRef<Partial<Record<SettingsTab, HTMLButtonElement | null>>>(
+    {}
+  );
 
-  useEffect(() => {
-    setModelDraft(activeModel ?? "");
-  }, [activeProvider, activeModel]);
-
-  useEffect(() => {
+  const clearFeedback = useCallback(() => {
     setFeedbackError(null);
     setErrorKey(null);
     setFeedbackSuccess(null);
+  }, []);
+
+  const handleSuccessFeedback = useCallback((msg: string) => {
+    setFeedbackError(null);
+    setErrorKey(null);
+    setFeedbackSuccess(msg);
+  }, []);
+
+  const handleErrorFeedback = useCallback((msg: string) => {
+    setFeedbackSuccess(null);
+    setFeedbackError(msg);
+  }, []);
+
+  useEffect(() => {
+    clearFeedback();
     setSavingKey(null);
     setSwitchingProvider(false);
-    setModelDraft(useOfficeStore.getState().snapshot.activeModel ?? "");
     clearError();
 
     let cancelled = false;
@@ -75,9 +107,11 @@ const ProvidersModalContent: React.FC<{ onClose: () => void }> = ({
     return () => {
       cancelled = true;
     };
-  }, [fetchSettings, clearError]);
+  }, [fetchSettings, clearError, clearFeedback]);
 
   const activeMeta = PROVIDER_META_BY_ID[activeProvider];
+  const effectiveDefaultModel =
+    activeModel ?? catalogDefault ?? activeMeta.defaultModel;
   const activeJcodeInfo = jcodeAuth[activeMeta.jcodeAuthKey];
   const isActiveKeySet = activeMeta.secretKey
     ? Boolean(configuredKeys[activeMeta.secretKey])
@@ -106,10 +140,32 @@ const ProvidersModalContent: React.FC<{ onClose: () => void }> = ({
     ? [...activeMeta.compatibleRuntimes]
     : [...activeMeta.compatibleRuntimes, activeRuntime];
 
+  const handleTabKeyDown = (
+    e: React.KeyboardEvent<HTMLButtonElement>,
+    index: number
+  ) => {
+    let nextIndex = index;
+    if (e.key === "ArrowRight") {
+      nextIndex = (index + 1) % TAB_ORDER.length;
+    } else if (e.key === "ArrowLeft") {
+      nextIndex = (index - 1 + TAB_ORDER.length) % TAB_ORDER.length;
+    } else if (e.key === "Home") {
+      nextIndex = 0;
+    } else if (e.key === "End") {
+      nextIndex = TAB_ORDER.length - 1;
+    } else {
+      return;
+    }
+    e.preventDefault();
+    const nextTab = TAB_ORDER[nextIndex];
+    if (!nextTab) return;
+    setSettingsTab(nextTab);
+    tabRefs.current[nextTab]?.focus();
+  };
+
   const handleRefreshSettings = async () => {
     setRefreshing(true);
-    setFeedbackError(null);
-    setErrorKey(null);
+    clearFeedback();
     clearError();
     await fetchSettings();
     setRefreshing(false);
@@ -123,9 +179,7 @@ const ProvidersModalContent: React.FC<{ onClose: () => void }> = ({
 
   const handleProviderChange = async (nextProvider: ProviderId) => {
     setSwitchingProvider(true);
-    setFeedbackError(null);
-    setErrorKey(null);
-    setFeedbackSuccess(null);
+    clearFeedback();
     clearError();
     await setActiveProvider(nextProvider, undefined, null);
     setSwitchingProvider(false);
@@ -134,7 +188,6 @@ const ProvidersModalContent: React.FC<{ onClose: () => void }> = ({
       setFeedbackError(apiError);
       return;
     }
-    setModelDraft("");
     setFeedbackSuccess(
       `Active provider switched to ${PROVIDER_META_BY_ID[nextProvider].shortLabel}.`
     );
@@ -142,9 +195,7 @@ const ProvidersModalContent: React.FC<{ onClose: () => void }> = ({
 
   const handleRuntimeChange = async (nextRuntime: RuntimeKind) => {
     setSwitchingProvider(true);
-    setFeedbackError(null);
-    setErrorKey(null);
-    setFeedbackSuccess(null);
+    clearFeedback();
     clearError();
     await setActiveProvider(activeProvider, nextRuntime, activeModel ?? null);
     setSwitchingProvider(false);
@@ -154,46 +205,6 @@ const ProvidersModalContent: React.FC<{ onClose: () => void }> = ({
       return;
     }
     setFeedbackSuccess(`Execution runtime set to ${RUNTIME_LABELS[nextRuntime]}.`);
-  };
-
-  const handleApplyModel = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const trimmed = modelDraft.trim();
-    const nextModel = trimmed.length > 0 ? trimmed : null;
-    setSwitchingProvider(true);
-    setFeedbackError(null);
-    setErrorKey(null);
-    setFeedbackSuccess(null);
-    clearError();
-    await setActiveProvider(activeProvider, activeRuntime, nextModel);
-    setSwitchingProvider(false);
-    const apiError = useOfficeStore.getState().lastError;
-    if (apiError) {
-      setFeedbackError(apiError);
-      return;
-    }
-    setFeedbackSuccess(
-      nextModel
-        ? `Model override set to ${nextModel}.`
-        : `Reset to default model (${activeMeta.defaultModel}).`
-    );
-  };
-
-  const handleResetModel = async () => {
-    setSwitchingProvider(true);
-    setFeedbackError(null);
-    setErrorKey(null);
-    setFeedbackSuccess(null);
-    clearError();
-    await setActiveProvider(activeProvider, activeRuntime, null);
-    setSwitchingProvider(false);
-    const apiError = useOfficeStore.getState().lastError;
-    if (apiError) {
-      setFeedbackError(apiError);
-      return;
-    }
-    setModelDraft("");
-    setFeedbackSuccess(`Reset to default model (${activeMeta.defaultModel}).`);
   };
 
   const handleSaveSecret = async (keyName: string) => {
@@ -207,9 +218,7 @@ const ProvidersModalContent: React.FC<{ onClose: () => void }> = ({
     }
 
     setSavingKey(keyName);
-    setFeedbackError(null);
-    setErrorKey(null);
-    setFeedbackSuccess(null);
+    clearFeedback();
     clearError();
     await saveSecretKey(keyName, val);
     setSavingKey(null);
@@ -239,8 +248,8 @@ const ProvidersModalContent: React.FC<{ onClose: () => void }> = ({
     <ModalDialog
       open
       titleId="settings-modal-title"
-      title="Single Active Provider & Credentials"
-      closeLabel="Close Providers Settings modal"
+      title="Providers, Models & Credentials"
+      closeLabel="Close Providers & Models Settings modal"
       onClose={onClose}
       footer={
         <button type="button" className="btn" onClick={onClose}>
@@ -248,95 +257,54 @@ const ProvidersModalContent: React.FC<{ onClose: () => void }> = ({
         </button>
       }
     >
+      <div
+        className="modal-tabs"
+        role="tablist"
+        aria-label="Provider and model settings"
+      >
+        <button
+          ref={(el) => {
+            tabRefs.current.credentials = el;
+          }}
+          id="providers-tab-credentials"
+          type="button"
+          role="tab"
+          aria-selected={settingsTab === "credentials"}
+          aria-controls="providers-tabpanel-credentials"
+          tabIndex={settingsTab === "credentials" ? 0 : -1}
+          className={`btn btn-sm ${
+            settingsTab === "credentials" ? "primary" : ""
+          }`}
+          onClick={() => {
+            clearFeedback();
+            setSettingsTab("credentials");
+          }}
+          onKeyDown={(e) => handleTabKeyDown(e, 0)}
+        >
+          Credentials &amp; Runtime
+        </button>
+        <button
+          ref={(el) => {
+            tabRefs.current.models = el;
+          }}
+          id="providers-tab-models"
+          type="button"
+          role="tab"
+          aria-selected={settingsTab === "models"}
+          aria-controls="providers-tabpanel-models"
+          tabIndex={settingsTab === "models" ? 0 : -1}
+          className={`btn btn-sm ${settingsTab === "models" ? "primary" : ""}`}
+          onClick={() => {
+            clearFeedback();
+            setSettingsTab("models");
+          }}
+          onKeyDown={(e) => handleTabKeyDown(e, 1)}
+        >
+          Model Catalog
+        </button>
+      </div>
+
       <div className="body">
-        <div className="field-grid-2">
-          <div className="field-group">
-            <label htmlFor="modal-active-provider">Active Provider</label>
-            <select
-              id="modal-active-provider"
-              className="input-control"
-              value={activeProvider}
-              disabled={switchingProvider}
-              onChange={(e) =>
-                void handleProviderChange(e.target.value as ProviderId)
-              }
-            >
-              {PROVIDER_CATALOG.map((opt) => (
-                <option key={opt.id} value={opt.id}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="field-group">
-            <label htmlFor="modal-active-runtime">Execution Runtime</label>
-            <select
-              id="modal-active-runtime"
-              className="input-control"
-              value={activeRuntime}
-              disabled={switchingProvider}
-              onChange={(e) =>
-                void handleRuntimeChange(e.target.value as RuntimeKind)
-              }
-            >
-              {runtimeOptions.map((rt) => (
-                <option key={rt} value={rt}>
-                  {RUNTIME_LABELS[rt]}
-                </option>
-              ))}
-            </select>
-            {activeMeta.compatibleRuntimes.length === 1 && (
-              <div className="field-hint">
-                OAuth providers require local jcode runtime.
-              </div>
-            )}
-          </div>
-        </div>
-
-        <form className="field-group" onSubmit={(e) => void handleApplyModel(e)}>
-          <label htmlFor="modal-active-model">Model Override (optional)</label>
-          <div className="model-override-row">
-            <input
-              id="modal-active-model"
-              type="text"
-              className="input-control"
-              value={modelDraft}
-              disabled={switchingProvider}
-              onChange={(e) => setModelDraft(e.target.value)}
-              placeholder={`Default: ${activeMeta.defaultModel}`}
-            />
-            <button
-              type="submit"
-              className="btn"
-              disabled={switchingProvider}
-            >
-              Apply Model
-            </button>
-            {activeModel && (
-              <button
-                type="button"
-                className="btn"
-                disabled={switchingProvider}
-                onClick={() => void handleResetModel()}
-              >
-                Reset
-              </button>
-            )}
-          </div>
-          <div className="field-hint">
-            All 8 office sub-agents run on {activeMeta.shortLabel} ({activeRuntime}
-            {activeModel ? `, model: ${activeModel}` : `, default: ${activeMeta.defaultModel}`}).
-          </div>
-        </form>
-
-        {loadingSettings && (
-          <div className="inline-status" role="status">
-            <span className="pill idle">Checking</span>
-            <span>Checking provider credentials and jcode OAuth status...</span>
-          </div>
-        )}
-
         {feedbackError && (
           <div id="providers-secret-error" className="inline-alert" role="alert">
             <span className="pill error">Error</span>
@@ -350,6 +318,96 @@ const ProvidersModalContent: React.FC<{ onClose: () => void }> = ({
             <span>{feedbackSuccess}</span>
           </div>
         )}
+
+        {settingsTab === "models" ? (
+          <ModelCatalogTab
+            onSuccess={handleSuccessFeedback}
+            onError={handleErrorFeedback}
+            clearFeedback={clearFeedback}
+          />
+        ) : (
+          <div
+            id="providers-tabpanel-credentials"
+            role="tabpanel"
+            aria-labelledby="providers-tab-credentials"
+            className="modal-tabpanel"
+          >
+            <div className="field-grid-2">
+              <div className="field-group">
+                <label htmlFor="modal-active-provider">Active Provider</label>
+                <select
+                  id="modal-active-provider"
+                  className="input-control"
+                  value={activeProvider}
+                  disabled={switchingProvider}
+                  onChange={(e) =>
+                    void handleProviderChange(e.target.value as ProviderId)
+                  }
+                >
+                  {PROVIDER_CATALOG.map((opt) => (
+                    <option key={opt.id} value={opt.id}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="field-group">
+                <label htmlFor="modal-active-runtime">Execution Runtime</label>
+                <select
+                  id="modal-active-runtime"
+                  className="input-control"
+                  value={activeRuntime}
+                  disabled={switchingProvider}
+                  onChange={(e) =>
+                    void handleRuntimeChange(e.target.value as RuntimeKind)
+                  }
+                >
+                  {runtimeOptions.map((rt) => (
+                    <option key={rt} value={rt}>
+                      {RUNTIME_LABELS[rt]}
+                    </option>
+                  ))}
+                </select>
+                {activeMeta.compatibleRuntimes.length === 1 && (
+                  <div className="field-hint">
+                    OAuth providers require local jcode runtime.
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="inline-status credentials-model-summary">
+              <span className="pill idle">Models</span>
+              <span className="credentials-model-text">
+                Default model:{" "}
+                <span className="code-chip">{effectiveDefaultModel}</span>
+                {roleOverrideCount > 0
+                  ? ` (+${roleOverrideCount} role override${
+                      roleOverrideCount === 1 ? "" : "s"
+                    })`
+                  : ""}
+              </span>
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={() => {
+                  clearFeedback();
+                  setSettingsTab("models");
+                }}
+              >
+                Configure in Model Catalog
+              </button>
+            </div>
+
+            {loadingSettings && (
+              <div className="inline-status" role="status">
+                <span className="pill idle">Checking</span>
+                <span>
+                  Checking provider credentials and jcode OAuth status...
+                </span>
+              </div>
+            )}
 
         <section
           className={`panel active-provider-card ${isReady ? "is-ready" : "needs-setup"}`}
@@ -548,6 +606,8 @@ const ProvidersModalContent: React.FC<{ onClose: () => void }> = ({
             })}
           </div>
         </details>
+          </div>
+        )}
       </div>
     </ModalDialog>
   );

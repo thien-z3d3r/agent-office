@@ -1,6 +1,7 @@
 import React, { useRef } from "react";
 import type { AgentRoleId, Ticket } from "@agent-office/protocol";
 import { useOfficeStore } from "../store/office-store.ts";
+import { resolveModelForRole } from "../store/provider-catalog.ts";
 import { ModalDialog } from "./ModalDialog.tsx";
 
 export interface AgentInspectorModalProps {
@@ -16,6 +17,14 @@ const AgentInspectorModalContent: React.FC<{ onClose: () => void }> = ({
   const setSelectedRole = useOfficeStore((s) => s.setSelectedRole);
   const activeProvider = useOfficeStore((s) => s.snapshot.activeProvider);
   const activeRuntime = useOfficeStore((s) => s.snapshot.activeRuntime);
+  const activeModel = useOfficeStore((s) => s.snapshot.activeModel ?? null);
+  const roleModelOverride = useOfficeStore(
+    (s) => s.snapshot.roleModels?.[s.selectedRoleId] ?? null
+  );
+  const catalogDefault = useOfficeStore(
+    (s) =>
+      s.modelCatalogByProvider[s.snapshot.activeProvider]?.defaultModel ?? null
+  );
   const selectedAgentLive = useOfficeStore(
     (s) => s.snapshot.agents[s.selectedRoleId]
   );
@@ -42,6 +51,14 @@ const AgentInspectorModalContent: React.FC<{ onClose: () => void }> = ({
   if (!selectedRole || !selectedAgentLive) {
     return null;
   }
+
+  const resolvedModel = resolveModelForRole({
+    provider: activeProvider,
+    roleId: selectedRole.id,
+    activeModel,
+    roleModels: roleModelOverride ? { [selectedRole.id]: roleModelOverride } : null,
+    catalogDefault,
+  });
 
   const handleTabKeyDown = (
     e: React.KeyboardEvent<HTMLButtonElement>,
@@ -131,7 +148,14 @@ const AgentInspectorModalContent: React.FC<{ onClose: () => void }> = ({
               <strong>Unified Provider:</strong>{" "}
               <span className="code-chip">{activeProvider}</span> (
               <span className="code-chip">{activeRuntime}</span>) ·{" "}
-              <strong>Spawned Sub-Agent:</strong>{" "}
+              <strong>Model:</strong>{" "}
+              <span className="code-chip">{resolvedModel}</span>{" "}
+              <span
+                className={`pill ${roleModelOverride ? "handoff" : "idle"}`}
+              >
+                {roleModelOverride ? "Role Override" : "Provider Default"}
+              </span>{" "}
+              · <strong>Spawned Sub-Agent:</strong>{" "}
               <span className="code-chip">
                 {selectedAgentLive.subAgentId ??
                   `sub-${activeProvider}-${selectedRole.id}`}
@@ -164,7 +188,7 @@ const AgentInspectorModalContent: React.FC<{ onClose: () => void }> = ({
               tabIndex={0}
             >
               {selectedAgentLive.streamBuffer ||
-                `$ agent-office --role ${selectedRole.id} --provider ${activeProvider}\n// Ready at desk. Dispatch a ticket to stream live output.`}
+                `$ agent-office --role ${selectedRole.id} --provider ${activeProvider} --model ${resolvedModel}\n// Ready at desk. Dispatch a ticket to stream live output.`}
             </pre>
           </div>
 

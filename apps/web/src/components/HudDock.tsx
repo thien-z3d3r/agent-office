@@ -1,7 +1,10 @@
 import React from "react";
-import type { ProviderId } from "@agent-office/protocol";
+import type { AgentRoleId, ProviderId } from "@agent-office/protocol";
 import { useOfficeStore } from "../store/office-store.ts";
-import { PROVIDER_CATALOG } from "../store/provider-catalog.ts";
+import {
+  PROVIDER_CATALOG,
+  PROVIDER_META_BY_ID,
+} from "../store/provider-catalog.ts";
 
 export interface HudDockProps {
   nightMode: boolean;
@@ -29,6 +32,21 @@ export const HudDock: React.FC<HudDockProps> = React.memo(({
   onOpenDispatch,
 }) => {
   const activeProvider = useOfficeStore((s) => s.snapshot.activeProvider);
+  const activeModel = useOfficeStore((s) => s.snapshot.activeModel ?? null);
+  const catalogDefault = useOfficeStore(
+    (s) =>
+      s.modelCatalogByProvider[s.snapshot.activeProvider]?.defaultModel ?? null
+  );
+  const roleOverrideCount = useOfficeStore((s) => {
+    let count = 0;
+    const rm = s.snapshot.roleModels;
+    if (rm) {
+      for (const k in rm) {
+        if (rm[k as AgentRoleId]) count += 1;
+      }
+    }
+    return count;
+  });
   const taskTableCount = useOfficeStore((s) => {
     let count = 0;
     for (const _ in s.snapshot.taskTable) count += 1;
@@ -38,7 +56,12 @@ export const HudDock: React.FC<HudDockProps> = React.memo(({
   const setActiveProvider = useOfficeStore((s) => s.setActiveProvider);
   const replayFixture = useOfficeStore((s) => s.replayFixture);
   const triggerStandup = useOfficeStore((s) => s.triggerStandup);
-  const setSettingsOpen = useOfficeStore((s) => s.setSettingsOpen);
+  const openSettingsModal = useOfficeStore((s) => s.openSettingsModal);
+
+  const effectiveDefaultModel =
+    activeModel ??
+    catalogDefault ??
+    PROVIDER_META_BY_ID[activeProvider].defaultModel;
 
   return (
     <nav className="dock" aria-label="Office actions">
@@ -63,6 +86,30 @@ export const HudDock: React.FC<HudDockProps> = React.memo(({
           ))}
         </select>
       </label>
+
+      <button
+        type="button"
+        className="btn dock-btn dock-models"
+        title={`Active default model: ${effectiveDefaultModel}${
+          roleOverrideCount > 0
+            ? ` (${roleOverrideCount} role override${
+                roleOverrideCount === 1 ? "" : "s"
+              })`
+            : ""
+        }`}
+        aria-label={`Models: ${effectiveDefaultModel}${
+          roleOverrideCount > 0 ? `, ${roleOverrideCount} role overrides` : ""
+        }`}
+        onClick={() => openSettingsModal("models")}
+      >
+        <span className="lbl">Models:</span>
+        <span className="code-chip dock-model-chip">
+          {effectiveDefaultModel}
+        </span>
+        {roleOverrideCount > 0 && (
+          <span className="svc-count">+{roleOverrideCount}</span>
+        )}
+      </button>
 
       <button
         type="button"
@@ -159,7 +206,7 @@ export const HudDock: React.FC<HudDockProps> = React.memo(({
       <button
         type="button"
         className="btn dock-btn"
-        onClick={() => setSettingsOpen(true)}
+        onClick={() => openSettingsModal("credentials")}
       >
         <span className="lbl">Providers & OAuth</span>
       </button>

@@ -1,6 +1,10 @@
 import React, { useMemo } from "react";
 import type { AgentRoleId } from "@agent-office/protocol";
 import { useOfficeStore } from "../store/office-store.ts";
+import {
+  PROVIDER_META_BY_ID,
+  resolveModelForRole,
+} from "../store/provider-catalog.ts";
 
 export interface TaskTablePanelProps {
   onHide: () => void;
@@ -15,6 +19,12 @@ export const TaskTablePanel: React.FC<TaskTablePanelProps> = React.memo(({
 }) => {
   const activeProvider = useOfficeStore((s) => s.snapshot.activeProvider);
   const activeRuntime = useOfficeStore((s) => s.snapshot.activeRuntime);
+  const activeModel = useOfficeStore((s) => s.snapshot.activeModel ?? null);
+  const roleModels = useOfficeStore((s) => s.snapshot.roleModels);
+  const catalogDefault = useOfficeStore(
+    (s) =>
+      s.modelCatalogByProvider[s.snapshot.activeProvider]?.defaultModel ?? null
+  );
   const taskTable = useOfficeStore((s) => s.snapshot.taskTable);
   const selectedRoleId = useOfficeStore((s) => s.selectedRoleId);
   const setSelectedTicket = useOfficeStore((s) => s.setSelectedTicket);
@@ -23,6 +33,11 @@ export const TaskTablePanel: React.FC<TaskTablePanelProps> = React.memo(({
     () => Object.values(taskTable).sort((a, b) => a.order - b.order),
     [taskTable]
   );
+
+  const effectiveDefaultModel =
+    activeModel ??
+    catalogDefault ??
+    PROVIDER_META_BY_ID[activeProvider].defaultModel;
 
   return (
     <section
@@ -47,6 +62,7 @@ export const TaskTablePanel: React.FC<TaskTablePanelProps> = React.memo(({
         <span className="code-chip">
           {activeProvider} ({activeRuntime})
         </span>{" "}
+        · Model: <span className="code-chip">{effectiveDefaultModel}</span>{" "}
         spawns role sub-agents row by row
       </div>
 
@@ -70,6 +86,15 @@ export const TaskTablePanel: React.FC<TaskTablePanelProps> = React.memo(({
         <ul className="ticket-list">
           {taskTableRows.map((row) => {
             const isSelected = selectedRoleId === row.role;
+            const rowModel =
+              row.model ??
+              resolveModelForRole({
+                provider: row.provider,
+                roleId: row.role,
+                activeModel,
+                roleModels,
+                catalogDefault,
+              });
             return (
               <li key={row.id}>
                 <button
@@ -84,6 +109,11 @@ export const TaskTablePanel: React.FC<TaskTablePanelProps> = React.memo(({
                   <span className="worker-main">
                     <span className="worker-title">
                       #{row.order} [{row.role.toUpperCase()}] · {row.title}
+                    </span>
+                    <span className="worker-model-row">
+                      <span className="code-chip worker-model-chip">
+                        {rowModel}
+                      </span>
                     </span>
                     <span className="worker-sub">
                       Sub-Agent: {row.subAgentId} · Target: {row.artifactOrCmd}
