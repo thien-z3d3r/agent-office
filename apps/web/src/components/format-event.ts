@@ -33,7 +33,7 @@ export function formatEventLine(ev: AgentEvent): string {
     case "agent.text":
       return `[${ev.agentId.toUpperCase()}] ${ev.delta.trim().slice(0, 80)}`;
     case "provider.changed":
-      return `[PROVIDER] Office unified provider switched to ${ev.provider.toUpperCase()} (${ev.runtime})`;
+      return `[PROVIDER] Office unified provider switched to ${ev.provider.toUpperCase()} (${ev.runtime}${ev.model ? `, ${ev.model}` : ""})`;
     case "task.table.set":
       return `[TASK TABLE] Generated ${ev.rows.length} role sub-agent tasks for ${ev.ticketId}`;
     case "task.row.updated":

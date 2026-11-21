@@ -13,7 +13,10 @@ import {
   type Ticket,
   type TicketSize,
 } from "@agent-office/protocol";
-import { PROVIDER_METADATA } from "../domain/providers.ts";
+import {
+  PROVIDER_METADATA,
+  validateRuntimeForProvider,
+} from "../domain/providers.ts";
 import type { WorkflowLimits } from "../domain/ticket-machine.ts";
 import type {
   AgentRuntimePort,
@@ -69,7 +72,24 @@ export class OfficeOrchestrator {
     this.store = args.store;
     this.workspace = args.workspace;
     this.runtimes = args.runtimes;
-    this.state = createInitialOfficeState();
+
+    const initialProvider = args.config.activeProvider;
+    const initialRuntime =
+      args.config.activeRuntime ??
+      PROVIDER_METADATA[initialProvider].defaultRuntime;
+    validateRuntimeForProvider(initialProvider, initialRuntime);
+    const initialModel =
+      typeof args.config.activeModel === "string" &&
+      args.config.activeModel.trim().length > 0
+        ? args.config.activeModel.trim()
+        : null;
+
+    this.state = {
+      ...createInitialOfficeState(),
+      activeProvider: initialProvider,
+      activeRuntime: initialRuntime,
+      activeModel: initialModel,
+    };
 
     const existing = this.store.listAll(2000);
     for (const ev of existing) {
@@ -96,18 +116,27 @@ export class OfficeOrchestrator {
     return this.config;
   }
 
-  setActiveProvider(provider: ProviderId, runtime?: RuntimeKind): AgentEvent {
+  setActiveProvider(
+    provider: ProviderId,
+    runtime?: RuntimeKind,
+    model?: string | null
+  ): AgentEvent {
     const resolvedRuntime = runtime ?? PROVIDER_METADATA[provider].defaultRuntime;
+    validateRuntimeForProvider(provider, resolvedRuntime);
+    const normalizedModel =
+      typeof model === "string" && model.trim().length > 0 ? model.trim() : null;
     const ev: AgentEvent = {
       id: crypto.randomUUID(),
       ts: Date.now(),
       t: "provider.changed",
       provider,
       runtime: resolvedRuntime,
+      model: normalizedModel,
     };
     this.emit(ev);
-    for (const ticketId of Object.keys(this.state.tickets)) {
-      this.syncTaskTableForTicket(ticketId);
+    for (const ticket of Object.values(this.state.tickets)) {
+      if (ticket.stage === "Done" || ticket.stage === "Escalated") continue;
+      this.syncTaskTableForTicket(ticket.id);
     }
     return ev;
   }
@@ -119,7 +148,11 @@ export class OfficeOrchestrator {
   syncTaskTableForTicket(ticketId: string): void {
     const ticket = this.state.tickets[ticketId];
     if (!ticket) return;
-    const rows = buildSyncedTaskTableRows(ticket, this.state.activeProvider);
+    const rows = buildSyncedTaskTableRows(
+      ticket,
+      this.state.activeProvider,
+      this.state.taskTable
+    );
     this.emit({
       id: crypto.randomUUID(),
       ts: Date.now(),

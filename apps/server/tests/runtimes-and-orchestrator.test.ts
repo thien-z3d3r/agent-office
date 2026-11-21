@@ -1,12 +1,19 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { WebSocket } from "ws";
-import type { AgentEvent, RoleConfig, Ticket } from "@agent-office/protocol";
+import type {
+  AgentEvent,
+  ProviderId,
+  RoleConfig,
+  RuntimeKind,
+  Ticket,
+} from "@agent-office/protocol";
 import { SQLiteOfficeStore } from "../src/adapters/sqlite/sqlite-store.ts";
 import {
   createScrubbedEnv,
@@ -28,7 +35,16 @@ import {
   createOfficeSystem,
   loadOfficeConfig,
 } from "../src/index.ts";
-import { runRoleStage, type StageRunnerContext } from "../src/application/stage-runner.ts";
+import { OfficeOrchestrator } from "../src/application/orchestrator.ts";
+import {
+  runRoleStage,
+  type StageRunnerContext,
+} from "../src/application/stage-runner.ts";
+import {
+  buildSyncedTaskTableRows,
+  buildUpdatedTaskRow,
+} from "../src/application/task-table.ts";
+import type { AgentRuntimePort, WorkspacePort } from "../src/ports/index.ts";
 import { startOfficeHttpServer } from "../src/adapters/http/server.ts";
 import { DEFAULT_WORKFLOW_LIMITS } from "../src/domain/ticket-machine.ts";
 
@@ -59,9 +75,6 @@ const beRole: RoleConfig = {
   zone: "dev_pod_be",
   tint: "#10b981",
   accessory: "coffee_mug",
-  runtime: "jcode",
-  provider: "antigravity",
-  fallback: { runtime: "ai-sdk", provider: "kimi_code" },
   tools: ["read", "grep", "write", "apply_patch", "bash"],
   allowCommands: ["git status"],
 };
@@ -102,6 +115,8 @@ test("JcodeRuntimeAdapter passes -p antigravity and --tools flags and converts N
     runId: "r-jcode-1",
     ticket: sampleTicket,
     role: beRole,
+    provider: "antigravity",
+    runtime: "jcode",
     prompt: "Create hello.txt containing 42",
     worktreePath: "/tmp/wt-test",
     signal: new AbortController().signal,
@@ -144,7 +159,9 @@ test("AiSdkRuntimeAdapter executes ReAct tool loop, enforces command policy appr
     for await (const ev of adapterNoKey.run({
       runId: "r-nokey",
       ticket: sampleTicket,
-      role: { ...beRole, runtime: "ai-sdk", provider: "kimi_code" },
+      role: beRole,
+      provider: "kimi_code",
+      runtime: "ai-sdk",
       prompt: "Test missing key",
       worktreePath: tmpDir,
       signal: new AbortController().signal,
@@ -204,10 +221,10 @@ test("AiSdkRuntimeAdapter executes ReAct tool loop, enforces command policy appr
     ticket: sampleTicket,
     role: {
       ...beRole,
-      runtime: "ai-sdk",
-      provider: "kimi_code",
       tools: ["write", "run_command"],
     },
+    provider: "kimi_code",
+    runtime: "ai-sdk",
     prompt: "Create hello.txt with 42",
     worktreePath: tmpDir,
     signal: new AbortController().signal,
@@ -261,6 +278,8 @@ test("ClaudeAgentSdkRuntimeAdapter and CodexSdkRuntimeAdapter map recorded SDK s
     runId: "r-cas",
     ticket: sampleTicket,
     role: beRole,
+    provider: "claude",
+    runtime: "claude-agent-sdk",
     prompt: "Audit repo",
     worktreePath: "/tmp/wt",
     signal: new AbortController().signal,
@@ -312,6 +331,8 @@ test("ClaudeAgentSdkRuntimeAdapter and CodexSdkRuntimeAdapter map recorded SDK s
     runId: "r-cdx",
     ticket: sampleTicket,
     role: beRole,
+    provider: "openai_oauth",
+    runtime: "codex-sdk",
     prompt: "Update UI",
     worktreePath: "/tmp/wt",
     signal: new AbortController().signal,
@@ -508,6 +529,7 @@ test("stage-runner preserves startedAt < endedAt and coalesces agent.text deltas
     getSnapshot: () => ({
       activeProvider: "kimi_code",
       activeRuntime: "scripted",
+      activeModel: null,
       agents: {} as StageRunnerContext["getSnapshot"] extends () => infer S
         ? S extends { agents: infer A }
           ? A
@@ -656,4 +678,534 @@ test("defaultLineStreamFactory drains >64 KiB stderr without pipe deadlock and p
   const first = await probeJcodeAuthStatus();
   const second = await probeJcodeAuthStatus();
   assert.equal(first, second);
+});
+
+function createMemoryWorkspace(worktreePath: string): WorkspacePort {
+  return {
+    ensureWorktree: async (ticketId, roleId) => ({
+      worktreePath,
+      branch: `agent/${roleId}/${ticketId}`,
+    }),
+    getDiff: async () => "+export const ok = true;",
+    mergeBranchToMain: async () => "merged",
+    runShellCommand: async () => ({ exitCode: 0, stdout: "ok", stderr: "" }),
+  };
+}
+
+test("Single-provider L-ticket executes all spawned role sub-agents on one provider with zero second-provider calls", async () => {
+  const store = new SQLiteOfficeStore(":memory:");
+  store.setSecret("KIMI_API_KEY", "sk-kimi-only");
+  const config = {
+    ...loadOfficeConfig(path.join(rootDir, "office.config.yaml")),
+    activeProvider: "kimi_code" as const,
+    activeRuntime: "ai-sdk" as const,
+    activeModel: "kimi-custom-model",
+  };
+
+  const seenInvocations: Array<{
+    role: string;
+    provider: ProviderId;
+    model?: string;
+  }> = [];
+
+  const mockAiSdk: AgentRuntimePort = {
+    kind: "ai-sdk",
+    async *run(req) {
+      seenInvocations.push({
+        role: req.role.id,
+        provider: req.provider,
+        model: req.model,
+      });
+      yield {
+        id: crypto.randomUUID(),
+        ts: Date.now(),
+        t: "agent.status",
+        agentId: req.role.id,
+        runId: req.runId,
+        ticketId: req.ticket.id,
+        status: "done",
+        detail: "Completed",
+        targetZone: req.role.zone,
+      };
+    },
+  };
+
+  const orch = new OfficeOrchestrator({
+    config,
+    store,
+    workspace: createMemoryWorkspace("/tmp/wt-single"),
+    runtimes: new Map([["ai-sdk", mockAiSdk]]),
+  });
+
+  const { ticket, completion } = await orch.submitTicket({
+    title: "Build single-provider L feature",
+    description: "End-to-end single-provider L ticket",
+    size: "L",
+    authorRole: "be",
+    mode: "live",
+    autoApproveMerge: true,
+  });
+
+  const finalTicket = await completion;
+  assert.equal(finalTicket.stage, "Done");
+  assert.deepEqual(
+    seenInvocations.map((i) => i.role),
+    ["em", "pm", "tl", "be", "reviewer", "qa", "devops"]
+  );
+  for (const call of seenInvocations) {
+    assert.equal(call.provider, "kimi_code");
+    assert.equal(call.model, "kimi-custom-model");
+  }
+
+  const rows = Object.values(orch.getSnapshot().taskTable).filter(
+    (r) => r.ticketId === ticket.id
+  );
+  assert.equal(rows.length, 7);
+  for (const row of rows) {
+    assert.equal(row.provider, "kimi_code");
+    assert.equal(row.subAgentId, `sub-kimi_code-${row.role}-${row.order}`);
+    assert.equal(row.status, "done");
+  }
+});
+
+test("Live mode fails cleanly with zero cross-provider fallback and zero silent scripted fallback", async () => {
+  const store = new SQLiteOfficeStore(":memory:");
+  const config = {
+    ...loadOfficeConfig(path.join(rootDir, "office.config.yaml")),
+    activeProvider: "claude" as const,
+    activeRuntime: "ai-sdk" as const,
+  };
+
+  let aiSdkAttempts = 0;
+  let jcodeAttempts = 0;
+
+  const failingAiSdk: AgentRuntimePort = {
+    kind: "ai-sdk",
+    async *run() {
+      aiSdkAttempts++;
+      throw new Error("401 unauthorized");
+    },
+  };
+  const spyJcode: AgentRuntimePort = {
+    kind: "jcode",
+    async *run() {
+      jcodeAttempts++;
+    },
+  };
+
+  const orch = new OfficeOrchestrator({
+    config,
+    store,
+    workspace: createMemoryWorkspace("/tmp/wt-no-fallback"),
+    runtimes: new Map<RuntimeKind, AgentRuntimePort>([
+      ["ai-sdk", failingAiSdk],
+      ["jcode", spyJcode],
+    ]),
+  });
+
+  const { ticket, completion } = await orch.submitTicket({
+    title: "Fail cleanly without fallback",
+    description: "Verify no fallback to jcode or another provider",
+    size: "S",
+    authorRole: "fe",
+    mode: "live",
+  });
+
+  const escalated = await completion;
+  assert.equal(aiSdkAttempts, 1);
+  assert.equal(jcodeAttempts, 0);
+  assert.equal(escalated.stage, "Escalated");
+  assert.ok(escalated.escalationReason?.includes("claude"));
+  assert.ok(escalated.escalationReason?.includes("ai-sdk"));
+  const emRow = Object.values(orch.getSnapshot().taskTable).find(
+    (r) => r.ticketId === ticket.id && r.role === "em"
+  );
+  assert.equal(emRow?.status, "failed");
+
+  // Unregistered activeRuntime in live mode must escalate instead of falling back to scripted.
+  let scriptedRan = false;
+  const spyScripted: AgentRuntimePort = {
+    kind: "scripted",
+    async *run() {
+      scriptedRan = true;
+    },
+  };
+  const orchUnregistered = new OfficeOrchestrator({
+    config: {
+      ...config,
+      activeProvider: "antigravity",
+      activeRuntime: "jcode",
+    },
+    store: new SQLiteOfficeStore(":memory:"),
+    workspace: createMemoryWorkspace("/tmp/wt-no-scripted"),
+    runtimes: new Map([["scripted", spyScripted]]),
+  });
+
+  const res2 = await orchUnregistered.submitTicket({
+    title: "Missing live runtime",
+    description: "Should not fall back to scripted",
+    size: "S",
+    authorRole: "be",
+    mode: "live",
+  });
+  const escalated2 = await res2.completion;
+  assert.equal(scriptedRan, false);
+  assert.equal(escalated2.stage, "Escalated");
+  assert.ok(escalated2.escalationReason?.includes("not registered"));
+});
+
+test("JcodeRuntimeAdapter scrubs unrelated secrets and passes -m model; AiSdkRuntimeAdapter rejects OAuth providers", async () => {
+  const store = new SQLiteOfficeStore(":memory:");
+  store.setSecret("ANTHROPIC_API_KEY", "sk-ant-secret");
+  store.setSecret("KIMI_API_KEY", "sk-kimi-secret");
+  store.setSecret("OPENAI_API_KEY", "sk-openai-secret");
+
+  const prevGemini = process.env["GEMINI_API_KEY"];
+  const prevMaster = process.env["OFFICE_MASTER_KEY"];
+  process.env["GEMINI_API_KEY"] = "leaked-env-gemini";
+  process.env["OFFICE_MASTER_KEY"] = "leaked-master";
+
+  try {
+    let capturedArgs: string[] = [];
+    let capturedEnv: NodeJS.ProcessEnv = {};
+
+    const adapter = new JcodeRuntimeAdapter(
+      store,
+      "/home/skadi/.local/bin/jcode",
+      async function* ({ cliArgs, env }) {
+        capturedArgs = cliArgs;
+        capturedEnv = env;
+        yield JSON.stringify({ type: "text", delta: "ok" });
+      }
+    );
+
+    // OAuth provider receives zero secret env keys.
+    for await (const _ev of adapter.run({
+      runId: "r-oauth",
+      ticket: sampleTicket,
+      role: beRole,
+      provider: "antigravity",
+      runtime: "jcode",
+      model: "gemini-2.5-pro",
+      prompt: "Check OAuth isolation",
+      worktreePath: "/tmp/wt",
+      signal: new AbortController().signal,
+      requestApproval: async () => true,
+    })) {
+      void _ev;
+    }
+    assert.ok(capturedArgs.includes("-m"));
+    assert.ok(capturedArgs.includes("gemini-2.5-pro"));
+    assert.equal(capturedEnv["ANTHROPIC_API_KEY"], undefined);
+    assert.equal(capturedEnv["KIMI_API_KEY"], undefined);
+    assert.equal(capturedEnv["OPENAI_API_KEY"], undefined);
+    assert.equal(capturedEnv["GEMINI_API_KEY"], undefined);
+    assert.equal(capturedEnv["OFFICE_MASTER_KEY"], undefined);
+
+    // API-key provider receives only its own envKey.
+    for await (const _ev of adapter.run({
+      runId: "r-kimi-jcode",
+      ticket: sampleTicket,
+      role: beRole,
+      provider: "kimi_code",
+      runtime: "jcode",
+      prompt: "Check single API key isolation",
+      worktreePath: "/tmp/wt",
+      signal: new AbortController().signal,
+      requestApproval: async () => true,
+    })) {
+      void _ev;
+    }
+    assert.equal(capturedEnv["KIMI_API_KEY"], "sk-kimi-secret");
+    assert.equal(capturedEnv["ANTHROPIC_API_KEY"], undefined);
+    assert.equal(capturedEnv["OPENAI_API_KEY"], undefined);
+    assert.equal(capturedEnv["GEMINI_API_KEY"], undefined);
+
+    // AiSdkRuntimeAdapter rejects jcode-oauth providers cleanly.
+    const aiSdk = new AiSdkRuntimeAdapter(
+      store,
+      createMemoryWorkspace("/tmp/wt")
+    );
+    await assert.rejects(async () => {
+      for await (const _ev of aiSdk.run({
+        runId: "r-invalid-oauth",
+        ticket: sampleTicket,
+        role: beRole,
+        provider: "antigravity",
+        runtime: "ai-sdk",
+        prompt: "Should fail",
+        worktreePath: "/tmp/wt",
+        signal: new AbortController().signal,
+        requestApproval: async () => true,
+      })) {
+        void _ev;
+      }
+    }, /jcode OAuth/);
+  } finally {
+    if (prevGemini === undefined) delete process.env["GEMINI_API_KEY"];
+    else process.env["GEMINI_API_KEY"] = prevGemini;
+    if (prevMaster === undefined) delete process.env["OFFICE_MASTER_KEY"];
+    else process.env["OFFICE_MASTER_KEY"] = prevMaster;
+  }
+});
+
+test("buildSyncedTaskTableRows preserves existing row statuses on mid-ticket provider switch and buildUpdatedTaskRow refreshes subAgentId", () => {
+  const inProgressTicket: Ticket = {
+    ...sampleTicket,
+    id: "T-SYNC",
+    size: "M",
+    stage: "InProgress",
+    assignee: "be",
+    authorRole: "be",
+  };
+
+  const initialRows = buildSyncedTaskTableRows(inProgressTicket, "claude");
+  assert.deepEqual(
+    initialRows.map((r) => [r.role, r.status]),
+    [
+      ["em", "done"],
+      ["be", "running"],
+      ["reviewer", "queued"],
+      ["qa", "queued"],
+      ["devops", "queued"],
+    ]
+  );
+
+  const tableMap = Object.fromEntries(initialRows.map((r) => [r.id, r]));
+  const syncedAfterSwitch = buildSyncedTaskTableRows(
+    inProgressTicket,
+    "kimi_code",
+    tableMap
+  );
+  assert.deepEqual(
+    syncedAfterSwitch.map((r) => [r.role, r.status, r.provider, r.subAgentId]),
+    [
+      ["em", "done", "kimi_code", "sub-kimi_code-em-1"],
+      ["be", "running", "kimi_code", "sub-kimi_code-be-2"],
+      ["reviewer", "queued", "kimi_code", "sub-kimi_code-reviewer-3"],
+      ["qa", "queued", "kimi_code", "sub-kimi_code-qa-4"],
+      ["devops", "queued", "kimi_code", "sub-kimi_code-devops-5"],
+    ]
+  );
+
+  const updated = buildUpdatedTaskRow(
+    tableMap,
+    "T-SYNC",
+    "be",
+    "gemini",
+    "done",
+    "Completed"
+  );
+  assert.equal(updated?.provider, "gemini");
+  assert.equal(updated?.subAgentId, "sub-gemini-be-2");
+  assert.equal(updated?.status, "done");
+});
+
+test("HTTP /api/settings & /api/provider validate runtime/model compatibility and orchestrator persists provider.changed over config defaults", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ao-prov-replay-"));
+  const dbPath = path.join(tmpDir, "office.sqlite3");
+
+  try {
+    const config = {
+      ...loadOfficeConfig(path.join(rootDir, "office.config.yaml")),
+      activeProvider: "kimi_code" as const,
+      activeRuntime: "ai-sdk" as const,
+      activeModel: "kimi-init",
+    };
+
+    const store1 = new SQLiteOfficeStore(dbPath, "test-replay-key");
+    const orch1 = new OfficeOrchestrator({
+      config,
+      store: store1,
+      workspace: createMemoryWorkspace(tmpDir),
+      runtimes: new Map(),
+    });
+    assert.equal(orch1.getSnapshot().activeProvider, "kimi_code");
+    assert.equal(orch1.getSnapshot().activeRuntime, "ai-sdk");
+    assert.equal(orch1.getSnapshot().activeModel, "kimi-init");
+
+    const handle = await startOfficeHttpServer({
+      orchestrator: orch1,
+      secrets: store1,
+      fixturesDir: path.join(rootDir, "apps/server/fixtures"),
+      host: "127.0.0.1",
+      port: 0,
+    });
+
+    try {
+      const baseUrl = `http://127.0.0.1:${handle.port}`;
+      const getRes = await fetch(`${baseUrl}/api/settings`);
+      assert.equal(getRes.status, 200);
+      const settingsJson = (await getRes.json()) as {
+        activeProvider: string;
+        activeRuntime: string;
+        activeModel: string | null;
+      };
+      assert.equal(settingsJson.activeProvider, "kimi_code");
+      assert.equal(settingsJson.activeRuntime, "ai-sdk");
+      assert.equal(settingsJson.activeModel, "kimi-init");
+
+      const badRuntime = await fetch(`${baseUrl}/api/provider`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ provider: "claude", runtime: "bogus-rt" }),
+      });
+      assert.equal(badRuntime.status, 400);
+
+      const incompatible = await fetch(`${baseUrl}/api/provider`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ provider: "antigravity", runtime: "ai-sdk" }),
+      });
+      assert.equal(incompatible.status, 400);
+
+      for (const nonObjectBody of ["null", "[]", '"claude"', "42"]) {
+        const nonObjRes = await fetch(`${baseUrl}/api/provider`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: nonObjectBody,
+        });
+        assert.equal(nonObjRes.status, 400);
+        const errJson = (await nonObjRes.json()) as { error?: string };
+        assert.equal(errJson.error, "JSON request body must be an object");
+      }
+
+      const validSwitch = await fetch(`${baseUrl}/api/provider`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          provider: "claude",
+          runtime: "ai-sdk",
+          model: "claude-opus-4-1",
+        }),
+      });
+      assert.equal(validSwitch.status, 200);
+    } finally {
+      await handle.close();
+      store1.close();
+    }
+
+    // Restart with original config: persisted provider.changed overrides config defaults.
+    const store2 = new SQLiteOfficeStore(dbPath, "test-replay-key");
+    const orch2 = new OfficeOrchestrator({
+      config,
+      store: store2,
+      workspace: createMemoryWorkspace(tmpDir),
+      runtimes: new Map(),
+    });
+    assert.equal(orch2.getSnapshot().activeProvider, "claude");
+    assert.equal(orch2.getSnapshot().activeRuntime, "ai-sdk");
+    assert.equal(orch2.getSnapshot().activeModel, "claude-opus-4-1");
+    store2.close();
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("OfficeOrchestrator.setActiveProvider preserves Done ticket rows and active agent targetZone", async () => {
+  const store = new SQLiteOfficeStore(":memory:");
+  store.setSecret("ANTHROPIC_API_KEY", "sk-ant-test");
+  store.setSecret("KIMI_API_KEY", "sk-kimi-test");
+
+  const config = {
+    ...loadOfficeConfig(path.join(rootDir, "office.config.yaml")),
+    activeProvider: "claude" as const,
+    activeRuntime: "ai-sdk" as const,
+  };
+
+  let releaseBe!: () => void;
+  const bePaused = new Promise<void>((resolve) => {
+    releaseBe = resolve;
+  });
+  let markBeRunning!: () => void;
+  const beStarted = new Promise<void>((resolve) => {
+    markBeRunning = resolve;
+  });
+
+  const gatedAiSdk: AgentRuntimePort = {
+    kind: "ai-sdk",
+    async *run(req) {
+      if (req.ticket.id === "T-2" && req.role.id === "be") {
+        yield {
+          id: crypto.randomUUID(),
+          ts: Date.now(),
+          t: "agent.status",
+          agentId: "be",
+          runId: req.runId,
+          ticketId: req.ticket.id,
+          status: "writing",
+          detail: "Editing backend file",
+          targetZone: "dev_pod_be",
+        };
+        markBeRunning();
+        await bePaused;
+      }
+      yield {
+        id: crypto.randomUUID(),
+        ts: Date.now(),
+        t: "agent.status",
+        agentId: req.role.id,
+        runId: req.runId,
+        ticketId: req.ticket.id,
+        status: "done",
+        detail: "Completed",
+        targetZone: req.role.zone,
+      };
+    },
+  };
+
+  const orch = new OfficeOrchestrator({
+    config,
+    store,
+    workspace: createMemoryWorkspace("/tmp/wt-multi-sync"),
+    runtimes: new Map([["ai-sdk", gatedAiSdk]]),
+  });
+
+  const t1Res = await orch.submitTicket({
+    title: "Completed ticket",
+    description: "Finish under claude",
+    size: "S",
+    authorRole: "be",
+    mode: "live",
+    autoApproveMerge: true,
+  });
+  const t1Done = await t1Res.completion;
+  assert.equal(t1Done.stage, "Done");
+
+  const t2Res = await orch.submitTicket({
+    title: "Active ticket",
+    description: "Pause mid-be",
+    size: "S",
+    authorRole: "be",
+    mode: "live",
+    autoApproveMerge: true,
+  });
+  await beStarted;
+
+  orch.setActiveProvider("kimi_code", "ai-sdk", "kimi-k2");
+
+  const snapAfterSwitch = orch.getSnapshot();
+  const t1Rows = Object.values(snapAfterSwitch.taskTable).filter(
+    (r) => r.ticketId === t1Done.id
+  );
+  assert.ok(t1Rows.length > 0);
+  for (const row of t1Rows) {
+    assert.equal(row.provider, "claude");
+    assert.equal(row.subAgentId, `sub-claude-${row.role}-${row.order}`);
+  }
+
+  const t2BeRow = Object.values(snapAfterSwitch.taskTable).find(
+    (r) => r.ticketId === t2Res.ticket.id && r.role === "be"
+  );
+  assert.equal(t2BeRow?.provider, "kimi_code");
+  assert.equal(t2BeRow?.status, "running");
+
+  assert.equal(snapAfterSwitch.agents.be.currentTicketId, t2Res.ticket.id);
+  assert.equal(snapAfterSwitch.agents.be.status, "writing");
+  assert.equal(snapAfterSwitch.agents.be.targetZone, "dev_pod_be");
+
+  releaseBe();
+  const t2Done = await t2Res.completion;
+  assert.equal(t2Done.stage, "Done");
+  store.close();
 });

@@ -25,7 +25,7 @@ export function parseStructuredToolBlocks(text: string): ParsedToolCall[] {
         });
       }
     } catch {
-      // ignore invalid tool block
+      // Skip malformed JSON fences in model prose without failing the turn.
     }
   }
   return calls;

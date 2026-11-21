@@ -1,7 +1,8 @@
 import * as THREE from "three";
 import type { ProviderId, TaskTableRow, Ticket } from "@agent-office/protocol";
-import { mesh, noOutline, roundedBox, textPlane, toon } from "../toon.ts";
+import { mesh, noOutline, roundedBox, toon } from "../toon.ts";
 import { FLOOR, MEETING_TABLE, PALETTE, type Disposable } from "./constants.ts";
+import { addTextLabelToAtlas, type StaticSignAtlas } from "./static-atlas.ts";
 
 export interface OfficeBoardsHandle {
   kanbanBoardCanvas: HTMLCanvasElement;
@@ -159,6 +160,7 @@ function paintMeetingBoard(
 export function buildOfficeBoards(
   root: THREE.Group,
   staticRoot: THREE.Group,
+  atlas: StaticSignAtlas,
   disposables: Set<Disposable>
 ): OfficeBoardsHandle {
   const buildFramedBoard = (
@@ -187,6 +189,7 @@ export function buildOfficeBoards(
     tex.anisotropy = 4;
     const geo = new THREE.PlaneGeometry(w, h);
     const mat = new THREE.MeshBasicMaterial({ map: tex });
+    mat.userData.outlineParameters = { visible: false };
     disposables.add(tex);
     disposables.add(geo);
     disposables.add(mat);
@@ -195,10 +198,14 @@ export function buildOfficeBoards(
     face.position.set(x, y, FLOOR.minZ + 0.08 + 0.07);
     root.add(noOutline(face));
 
-    const lbl = textPlane(title, { bg: "#fffaf3", size: 58 });
-    lbl.scale.multiplyScalar(1.1);
-    lbl.position.set(x, y + h / 2 + 0.45, FLOOR.minZ + 0.08);
-    root.add(lbl);
+    addTextLabelToAtlas(
+      atlas,
+      title,
+      { bg: "#fffaf3", size: 58 },
+      [x, y + h / 2 + 0.45, FLOOR.minZ + 0.08],
+      0,
+      1.1
+    );
     return { canvas, tex };
   };
 

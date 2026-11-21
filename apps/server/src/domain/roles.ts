@@ -1,11 +1,9 @@
 import type {
   AgentRoleId,
   AgentStatus,
-  ProviderId,
   RoleConfig,
 } from "@agent-office/protocol";
 import { isPathInsideWorktree } from "./command-policy.ts";
-import { PROVIDER_METADATA } from "./providers.ts";
 
 export function mapToolToAgentStatus(toolName: string): AgentStatus {
   const lower = toolName.toLowerCase();
@@ -89,28 +87,6 @@ export function canRoleUseTool(
       targetRelPath ? ` on "${targetRelPath}"` : ""
     }`,
   };
-}
-
-export function selectCrossVendorReviewerProvider(
-  reviewerRole: RoleConfig,
-  authorProvider?: ProviderId
-): { runtime: RoleConfig["runtime"]; provider: ProviderId } {
-  if (!authorProvider) {
-    return { runtime: reviewerRole.runtime, provider: reviewerRole.provider };
-  }
-  const authorVendor = PROVIDER_METADATA[authorProvider].vendorGroup;
-  const primaryVendor = PROVIDER_METADATA[reviewerRole.provider].vendorGroup;
-  if (primaryVendor !== authorVendor) {
-    return { runtime: reviewerRole.runtime, provider: reviewerRole.provider };
-  }
-  const fallbackVendor = PROVIDER_METADATA[reviewerRole.fallback.provider].vendorGroup;
-  if (fallbackVendor !== authorVendor) {
-    return {
-      runtime: reviewerRole.fallback.runtime,
-      provider: reviewerRole.fallback.provider,
-    };
-  }
-  return { runtime: "ai-sdk", provider: "claude" };
 }
 
 export function getJcodeToolsFlagForRole(roleId: AgentRoleId, role: RoleConfig): string {

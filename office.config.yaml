@@ -1,6 +1,8 @@
 # Agent Office - 8-Role Dev Office Configuration
 
 version: 1
+activeProvider: "antigravity"
+activeRuntime: "jcode"
 office:
   name: "Agent Office"
   host: "127.0.0.1"
@@ -45,13 +47,6 @@ limits:
   dailyUsd: 15.00
   concurrency:
     total: 4
-    perProvider:
-      antigravity: 1
-      openai_oauth: 2
-      openai_api: 2
-      claude: 2
-      kimi_code: 2
-      gemini: 2
 
 roles:
   - id: em
@@ -59,9 +54,6 @@ roles:
     zone: "em_glass_office"
     tint: "#6366f1"
     accessory: "clipboard"
-    runtime: "ai-sdk"
-    provider: "claude"
-    fallback: { runtime: "ai-sdk", provider: "openai_api" }
     tools: ["board.triage", "board.assign", "board.comment", "ask_agent", "ask_director"]
     allowCommands: []
 
@@ -70,9 +62,6 @@ roles:
     zone: "planning_pod_pm"
     tint: "#ec4899"
     accessory: "sticky_pad"
-    runtime: "ai-sdk"
-    provider: "kimi_code"
-    fallback: { runtime: "ai-sdk", provider: "gemini" }
     tools: ["read", "grep", "write:docs/specs/**", "board.comment", "ask_agent", "ask_director"]
     allowCommands: []
 
@@ -81,9 +70,6 @@ roles:
     zone: "planning_pod_tl"
     tint: "#8b5cf6"
     accessory: "blueprint_tube"
-    runtime: "jcode"
-    provider: "claude"
-    fallback: { runtime: "ai-sdk", provider: "openai_api" }
     tools: ["read", "grep", "write:docs/adr/**", "git.diff", "git.log", "board.breakdown", "board.propose_merge", "ask_agent", "ask_director"]
     allowCommands: ["git status", "git diff *", "git log *"]
 
@@ -92,9 +78,6 @@ roles:
     zone: "dev_pod_fe"
     tint: "#06b6d4"
     accessory: "headphones"
-    runtime: "jcode"
-    provider: "openai_oauth"
-    fallback: { runtime: "ai-sdk", provider: "openai_api" }
     tools: ["read", "grep", "write", "apply_patch", "bash", "board.comment", "ask_agent"]
     allowCommands: ["git status", "git diff *", "git add *", "git commit *", "pnpm --filter @agent-office/web typecheck", "pnpm --filter @agent-office/web test *"]
 
@@ -103,9 +86,6 @@ roles:
     zone: "dev_pod_be"
     tint: "#10b981"
     accessory: "coffee_mug"
-    runtime: "jcode"
-    provider: "antigravity"
-    fallback: { runtime: "jcode", provider: "kimi_code" }
     tools: ["read", "grep", "write", "apply_patch", "bash", "board.comment", "ask_agent"]
     allowCommands: ["git status", "git diff *", "git add *", "git commit *", "pnpm --filter @agent-office/server typecheck", "pnpm --filter @agent-office/server test *"]
 
@@ -114,9 +94,6 @@ roles:
     zone: "qa_lab"
     tint: "#f59e0b"
     accessory: "visor"
-    runtime: "ai-sdk"
-    provider: "gemini"
-    fallback: { runtime: "ai-sdk", provider: "kimi_code" }
     tools: ["read", "grep", "write:**/*.test.ts", "write:tests/**", "run_command", "board.comment", "board.report_bug"]
     allowCommands: ["pnpm test", "pnpm -r test", "pnpm vitest *", "pnpm playwright test *", "git status", "git diff *"]
 
@@ -125,9 +102,6 @@ roles:
     zone: "review_desk"
     tint: "#ef4444"
     accessory: "magnifying_glass"
-    runtime: "ai-sdk"
-    provider: "kimi_code"
-    fallback: { runtime: "ai-sdk", provider: "openai_api" }
     tools: ["read", "grep", "git.diff", "git.log", "review.submit"]
     allowCommands: ["git diff *", "git log *", "git status"]
 
@@ -136,8 +110,5 @@ roles:
     zone: "server_rack_corner"
     tint: "#14b8a6"
     accessory: "hardhat"
-    runtime: "ai-sdk"
-    provider: "gemini"
-    fallback: { runtime: "ai-sdk", provider: "openai_api" }
     tools: ["read", "grep", "write:Dockerfile*", "write:.github/**", "write:scripts/**", "run_command", "board.comment"]
     allowCommands: ["pnpm -r build", "pnpm -r lint", "pnpm -r typecheck", "pnpm depcruise", "pnpm assets:check", "git status", "git log *"]

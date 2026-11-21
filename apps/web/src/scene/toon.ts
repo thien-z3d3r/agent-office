@@ -19,23 +19,29 @@ export function gradientMap(): THREE.DataTexture {
 }
 
 const materialCache = new Map<string, THREE.MeshToonMaterial>();
+const outlinedToonMaterials = new WeakSet<THREE.MeshToonMaterial>();
 const roundedBoxCache = new Map<string, THREE.BufferGeometry>();
+
+export interface ToonOpts {
+  emissive?: THREE.ColorRepresentation;
+  transparent?: boolean;
+  opacity?: number;
+  outline?: boolean;
+}
 
 export function toon(
   color: THREE.ColorRepresentation,
-  opts: {
-    emissive?: THREE.ColorRepresentation;
-    transparent?: boolean;
-    opacity?: number;
-  } = {}
+  opts: ToonOpts = {}
 ): THREE.MeshToonMaterial {
+  const outline = opts.outline !== false;
   const emissiveKey =
     opts.emissive !== undefined ? new THREE.Color(opts.emissive).getHexString() : "";
   const key = `${new THREE.Color(color).getHexString()}|${emissiveKey}|${
     opts.transparent ? 1 : 0
-  }|${opts.opacity ?? 1}`;
+  }|${opts.opacity ?? 1}|${outline ? 1 : 0}`;
   const hit = materialCache.get(key);
   if (hit) return hit;
+
   const m = new THREE.MeshToonMaterial({ color, gradientMap: gradientMap() });
   if (opts.emissive !== undefined) {
     m.emissive = new THREE.Color(opts.emissive);
@@ -44,14 +50,35 @@ export function toon(
     m.transparent = true;
     m.opacity = opts.opacity ?? 1;
   }
+  if (!outline) {
+    m.userData.outlineParameters = { visible: false };
+  } else {
+    outlinedToonMaterials.add(m);
+  }
   materialCache.set(key, m);
   return m;
 }
 
 export function toonUnique(
-  color: THREE.ColorRepresentation
+  color: THREE.ColorRepresentation,
+  opts: { outline?: boolean } = {}
 ): THREE.MeshToonMaterial {
-  return new THREE.MeshToonMaterial({ color, gradientMap: gradientMap() });
+  const m = new THREE.MeshToonMaterial({ color, gradientMap: gradientMap() });
+  if (opts.outline === false) {
+    m.userData.outlineParameters = { visible: false };
+  }
+  return m;
+}
+
+function getNoOutlineToonVariant(
+  mat: THREE.MeshToonMaterial
+): THREE.MeshToonMaterial {
+  return toon(mat.color, {
+    emissive: mat.emissive.getHex() !== 0 ? mat.emissive : undefined,
+    transparent: mat.transparent,
+    opacity: mat.opacity,
+    outline: false,
+  });
 }
 
 export function disposeSharedToonCache(): void {
@@ -84,9 +111,44 @@ export function mesh(
   return m;
 }
 
+// Write outlineParameters onto Material.userData (read by ToonOutlineEffect) without mutating shared outline:true materials.
 export function noOutline<T extends THREE.Object3D>(root: T): T {
   root.traverse((o) => {
     o.userData.outlineParameters = { visible: false };
+    const m = o as THREE.Mesh;
+    if (!m.isMesh || !m.material) return;
+    if (Array.isArray(m.material)) {
+      m.material = m.material.map((mat) => {
+        if (
+          mat instanceof THREE.MeshToonMaterial &&
+          outlinedToonMaterials.has(mat)
+        ) {
+          return getNoOutlineToonVariant(mat);
+        }
+        mat.userData.outlineParameters = {
+          ...(mat.userData.outlineParameters as
+            | Record<string, unknown>
+            | undefined),
+          visible: false,
+        };
+        return mat;
+      });
+    } else {
+      const mat = m.material;
+      if (
+        mat instanceof THREE.MeshToonMaterial &&
+        outlinedToonMaterials.has(mat)
+      ) {
+        m.material = getNoOutlineToonVariant(mat);
+      } else {
+        mat.userData.outlineParameters = {
+          ...(mat.userData.outlineParameters as
+            | Record<string, unknown>
+            | undefined),
+          visible: false,
+        };
+      }
+    }
   });
   return root;
 }
@@ -133,20 +195,32 @@ export interface TextOpts {
   border?: string;
 }
 
-const TEXT_SCALE = 0.0055;
+export const TEXT_SCALE = 0.0055;
 const INK = "#2b2d42";
 const FONT = "Nunito, ui-rounded, 'SF Pro Rounded', system-ui, sans-serif";
 
-function textTexture(text: string, opts: TextOpts) {
+export function measureTextPill(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  opts: TextOpts
+): { w: number; h: number; size: number; font: string } {
   const size = opts.size ?? 48;
-  const canvas = document.createElement("canvas");
-  const ctx = canvas.getContext("2d")!;
   const font = `800 ${size}px ${FONT}`;
   ctx.font = font;
   const w = Math.ceil(ctx.measureText(text).width) + size;
   const h = Math.ceil(size * 1.6);
-  canvas.width = w;
-  canvas.height = h;
+  return { w, h, size, font };
+}
+
+export function paintTextPill(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  size: number,
+  font: string,
+  text: string,
+  opts: TextOpts
+): void {
   ctx.font = font;
   if (opts.bg) {
     ctx.fillStyle = opts.bg;
@@ -162,10 +236,37 @@ function textTexture(text: string, opts: TextOpts) {
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillText(text, w / 2, h / 2 + size * 0.05);
+}
+
+function textTexture(text: string, opts: TextOpts) {
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d")!;
+  const { w, h, size, font } = measureTextPill(ctx, text, opts);
+  canvas.width = w;
+  canvas.height = h;
+  paintTextPill(ctx, w, h, size, font, text, opts);
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = 4;
   return { tex, w, h };
+}
+
+export function paintTextCanvas(
+  canvas: HTMLCanvasElement,
+  text: string,
+  opts: TextOpts = {}
+): { w: number; h: number; resized: boolean } {
+  const ctx = canvas.getContext("2d")!;
+  const { w, h, size, font } = measureTextPill(ctx, text, opts);
+  const resized = canvas.width !== w || canvas.height !== h;
+  if (resized) {
+    canvas.width = w;
+    canvas.height = h;
+  } else {
+    ctx.clearRect(0, 0, w, h);
+  }
+  paintTextPill(ctx, w, h, size, font, text, opts);
+  return { w, h, resized };
 }
 
 export function textSprite(text: string, opts: TextOpts = {}): THREE.Sprite {
@@ -181,24 +282,6 @@ export function textSprite(text: string, opts: TextOpts = {}): THREE.Sprite {
   return sprite;
 }
 
-export function textPlane(
-  text: string,
-  opts: TextOpts = {}
-): THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial> {
-  const { tex, w, h } = textTexture(text, opts);
-  const mat = new THREE.MeshBasicMaterial({
-    map: tex,
-    transparent: true,
-    alphaTest: 0.05,
-  });
-  return noOutline(
-    new THREE.Mesh(
-      new THREE.PlaneGeometry(w * TEXT_SCALE, h * TEXT_SCALE),
-      mat
-    )
-  );
-}
-
 export interface CardOpts {
   chip?: { text: string; bg: string; color: string };
   title: string;
@@ -208,7 +291,7 @@ export interface CardOpts {
   maxWidth?: number;
 }
 
-const CARD_RES = 2;
+export const CARD_RES = 2;
 
 function wrapText(
   ctx: CanvasRenderingContext2D,
@@ -244,7 +327,10 @@ function wrapText(
   return kept;
 }
 
-export function cardSprite(o: CardOpts): THREE.Sprite {
+export function paintCardCanvas(
+  canvas: HTMLCanvasElement,
+  o: CardOpts
+): { w: number; h: number; resized: boolean } {
   const R = CARD_RES;
   const maxW = (o.maxWidth ?? 380) * R;
   const pad = 16 * R;
@@ -257,7 +343,7 @@ export function cardSprite(o: CardOpts): THREE.Sprite {
   const bodyFont = `700 ${22 * R}px ${FONT}`;
   const bodyLH = 28 * R;
 
-  const ctx = document.createElement("canvas").getContext("2d")!;
+  const ctx = canvas.getContext("2d")!;
   ctx.font = titleFont;
   const title = wrapText(ctx, o.title, maxW, 2);
   const titleW = Math.max(...title.map((l) => ctx.measureText(l).width), 60);
@@ -276,9 +362,14 @@ export function cardSprite(o: CardOpts): THREE.Sprite {
   const bottom = bodyY + body.length * bodyLH + pad * 0.7;
   const h = Math.ceil(bottom + tail + lw);
 
-  const canvas = ctx.canvas;
-  canvas.width = w;
-  canvas.height = h;
+  const resized = canvas.width !== w || canvas.height !== h;
+  if (resized) {
+    canvas.width = w;
+    canvas.height = h;
+  } else {
+    ctx.clearRect(0, 0, w, h);
+  }
+
   const x0 = lw / 2;
   const x1 = w - lw / 2;
   const cx = w / 2;
@@ -322,22 +413,51 @@ export function cardSprite(o: CardOpts): THREE.Sprite {
   ctx.fillStyle = "#4a4d66";
   body.forEach((l, i) => ctx.fillText(l, cx, bodyY + (i + 0.5) * bodyLH));
 
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = 4;
-  const sprite = new THREE.Sprite(
-    new THREE.SpriteMaterial({ map: tex, depthWrite: false, transparent: true })
-  );
-  sprite.scale.set((w / R) * TEXT_SCALE, (h / R) * TEXT_SCALE, 1);
-  sprite.center.set(0.5, 0);
-  sprite.renderOrder = 10;
-  return sprite;
+  return { w, h, resized };
 }
 
 export function disposeSprite(s: THREE.Sprite | null) {
   if (!s) return;
   s.material.map?.dispose();
   s.material.dispose();
+}
+
+export function mergeColoredParts(
+  parts: Array<{
+    geo: THREE.BufferGeometry;
+    color?: THREE.ColorRepresentation;
+    matrix?: THREE.Matrix4;
+  }>
+): THREE.BufferGeometry {
+  const prepared: THREE.BufferGeometry[] = [];
+  const tmpColor = new THREE.Color();
+  for (const p of parts) {
+    const g = p.geo.index ? p.geo.toNonIndexed() : p.geo.clone();
+    for (const k of Object.keys(g.attributes)) {
+      if (k !== "position" && k !== "normal") g.deleteAttribute(k);
+    }
+    if (!g.attributes.normal) g.computeVertexNormals();
+    if (p.matrix) g.applyMatrix4(p.matrix);
+    if (p.color !== undefined) {
+      tmpColor.set(p.color);
+      const count = g.attributes.position!.count;
+      const arr = new Float32Array(count * 3);
+      for (let i = 0; i < count; i++) {
+        arr[i * 3] = tmpColor.r;
+        arr[i * 3 + 1] = tmpColor.g;
+        arr[i * 3 + 2] = tmpColor.b;
+      }
+      g.setAttribute("color", new THREE.BufferAttribute(arr, 3));
+    }
+    prepared.push(g);
+  }
+  const merged =
+    prepared.length === 1 ? prepared[0]! : mergeGeometries(prepared);
+  if (prepared.length > 1) {
+    for (const g of prepared) g.dispose();
+  }
+  if (!merged) throw new Error("Failed to merge actor geometries");
+  return merged;
 }
 
 export function mergeByMaterial(root: THREE.Object3D): THREE.Group {
@@ -400,5 +520,146 @@ export function mergeByMaterial(root: THREE.Object3D): THREE.Group {
       }
     }
   }
+  return out;
+}
+
+// Bake static MeshToonMaterial colors into vertex colors while keeping dynamic Day/Night and emissive materials separate.
+export function mergeStaticWorld(
+  root: THREE.Object3D,
+  keepSeparate: ReadonlySet<THREE.Material>,
+  disposables: Set<{ dispose: () => void }>
+): THREE.Group {
+  root.updateMatrixWorld(true);
+  const inv = root.matrixWorld.clone().invert();
+  const tmpMat = new THREE.Matrix4();
+
+  const bakedBuckets: Record<
+    "staticShadow" | "staticOutlinedNoShadow" | "staticNoOutline",
+    THREE.BufferGeometry[]
+  > = {
+    staticShadow: [],
+    staticOutlinedNoShadow: [],
+    staticNoOutline: [],
+  };
+
+  const separateBuckets = new Map<
+    string,
+    {
+      mat: THREE.Material;
+      cast: boolean;
+      receive: boolean;
+      noOut: boolean;
+      geos: THREE.BufferGeometry[];
+    }
+  >();
+
+  root.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (!m.isMesh || Array.isArray(m.material)) return;
+    const mat = m.material as THREE.MeshToonMaterial;
+
+    const geo = m.geometry.index
+      ? m.geometry.toNonIndexed()
+      : m.geometry.clone();
+    for (const k of Object.keys(geo.attributes)) {
+      if (k !== "position" && k !== "normal") geo.deleteAttribute(k);
+    }
+    if (!geo.attributes.normal) {
+      geo.computeVertexNormals();
+    }
+    geo.applyMatrix4(tmpMat.multiplyMatrices(inv, m.matrixWorld));
+
+    const noOut =
+      (m.userData?.outlineParameters as { visible?: boolean } | undefined)
+        ?.visible === false ||
+      (mat.userData?.outlineParameters as { visible?: boolean } | undefined)
+        ?.visible === false;
+    const isEmissiveOrSpecial =
+      keepSeparate.has(mat) ||
+      !(mat instanceof THREE.MeshToonMaterial) ||
+      mat.emissive.getHex() !== 0 ||
+      mat.transparent ||
+      Boolean(mat.map);
+
+    if (isEmissiveOrSpecial) {
+      const key = `${mat.uuid}|${m.castShadow ? 1 : 0}|${m.receiveShadow ? 1 : 0}|${noOut ? 1 : 0}`;
+      let entry = separateBuckets.get(key);
+      if (!entry) {
+        entry = {
+          mat,
+          cast: m.castShadow,
+          receive: m.receiveShadow,
+          noOut,
+          geos: [],
+        };
+        separateBuckets.set(key, entry);
+      }
+      entry.geos.push(geo);
+      return;
+    }
+
+    const vCount = geo.attributes.position!.count;
+    const colors = new Float32Array(vCount * 3);
+    const { r, g, b } = mat.color;
+    for (let i = 0; i < colors.length; i += 3) {
+      colors[i] = r;
+      colors[i + 1] = g;
+      colors[i + 2] = b;
+    }
+    geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+
+    if (noOut) {
+      bakedBuckets.staticNoOutline.push(geo);
+    } else if (m.castShadow) {
+      bakedBuckets.staticShadow.push(geo);
+    } else {
+      bakedBuckets.staticOutlinedNoShadow.push(geo);
+    }
+  });
+
+  const out = new THREE.Group();
+
+  const emitBaked = (
+    geos: THREE.BufferGeometry[],
+    cast: boolean,
+    outline: boolean
+  ) => {
+    if (geos.length === 0) return;
+    const merged = geos.length === 1 ? geos[0]! : mergeGeometries(geos);
+    if (geos.length > 1) {
+      for (const g of geos) g.dispose();
+    }
+    if (!merged) return;
+    const mat = new THREE.MeshToonMaterial({
+      color: 0xffffff,
+      gradientMap: gradientMap(),
+      vertexColors: true,
+    });
+    if (!outline) {
+      mat.userData.outlineParameters = { visible: false };
+    }
+    disposables.add(mat);
+    disposables.add(merged);
+    const mergedMesh = mesh(merged, mat, 0, 0, 0, cast);
+    mergedMesh.receiveShadow = true;
+    out.add(outline ? mergedMesh : noOutline(mergedMesh));
+  };
+
+  emitBaked(bakedBuckets.staticShadow, true, true);
+  emitBaked(bakedBuckets.staticOutlinedNoShadow, false, true);
+  emitBaked(bakedBuckets.staticNoOutline, false, false);
+
+  for (const { mat, cast, receive, noOut, geos } of separateBuckets.values()) {
+    const merged = geos.length === 1 ? geos[0]! : mergeGeometries(geos);
+    if (geos.length > 1) {
+      for (const g of geos) g.dispose();
+    }
+    if (!merged) continue;
+    disposables.add(merged);
+    const mergedMesh = mesh(merged, mat, 0, 0, 0, cast);
+    mergedMesh.receiveShadow = receive;
+    out.add(noOut ? noOutline(mergedMesh) : mergedMesh);
+  }
+
   return out;
 }

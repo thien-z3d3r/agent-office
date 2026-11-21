@@ -6,6 +6,7 @@ const FOCUSABLE_SELECTOR = [
   'input:not(:disabled):not([type="hidden"])',
   "select:not(:disabled)",
   "textarea:not(:disabled)",
+  "summary",
   '[tabindex]:not([tabindex="-1"])',
 ].join(", ");
 
@@ -51,13 +52,14 @@ export function useModalFocusTrap(args: {
     if (!modalEl) return;
 
     const onKeyDown = (e: KeyboardEvent) => {
+      if (e.isComposing || e.defaultPrevented) return;
       if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
         onCloseRef.current();
         return;
       }
-      if (e.key !== "Tab") return;
+      if (e.key !== "Tab" || e.altKey || e.ctrlKey || e.metaKey) return;
 
       const focusables = getFocusableElements(modalEl);
       if (focusables.length === 0) {
@@ -82,9 +84,9 @@ export function useModalFocusTrap(args: {
       }
     };
 
-    modalEl.addEventListener("keydown", onKeyDown);
+    document.addEventListener("keydown", onKeyDown);
     return () => {
-      modalEl.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("keydown", onKeyDown);
       const opener = openerRef.current;
       openerRef.current = null;
       if (opener && opener.isConnected) {

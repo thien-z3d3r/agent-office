@@ -1,11 +1,11 @@
 import * as THREE from "three";
+import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import {
   gradientMap,
   mergeByMaterial,
   mesh,
   noOutline,
   roundedBox,
-  textPlane,
   toon,
 } from "../toon.ts";
 import {
@@ -23,6 +23,7 @@ import {
   type Disposable,
 } from "./constants.ts";
 import { chair } from "./furniture.ts";
+import { addTextLabelToAtlas, type StaticSignAtlas } from "./static-atlas.ts";
 
 export interface GlassMaterials {
   glassMat: THREE.MeshBasicMaterial;
@@ -44,6 +45,8 @@ export function createGlassMaterials(disposables: Set<Disposable>): GlassMateria
     depthWrite: false,
     side: THREE.DoubleSide,
   });
+  glassMat.userData.outlineParameters = { visible: false };
+  shineMat.userData.outlineParameters = { visible: false };
   disposables.add(glassMat);
   disposables.add(shineMat);
   return { glassMat, shineMat };
@@ -78,7 +81,7 @@ function glassPane(
   return noOutline(g);
 }
 
-function mergeStaticGlassRun(
+export function mergeStaticGlassRun(
   runGroup: THREE.Group,
   disposables: Set<Disposable>
 ): THREE.Group {
@@ -134,6 +137,8 @@ export interface RoomShellResult {
 export function buildRoomShell(
   root: THREE.Group,
   staticRoot: THREE.Group,
+  staticGlassRoot: THREE.Group,
+  atlas: StaticSignAtlas,
   wallMat: THREE.MeshToonMaterial,
   trimMat: THREE.MeshToonMaterial,
   glassMats: GlassMaterials,
@@ -145,22 +150,49 @@ export function buildRoomShell(
     map: floorTex,
     gradientMap: gradientMap(),
   });
-  const floorGeo = new THREE.PlaneGeometry(36, 26);
-  const floorMesh = new THREE.Mesh(floorGeo, floorMat);
-  floorMesh.rotation.x = -Math.PI / 2;
-  floorMesh.receiveShadow = true;
-  root.add(noOutline(floorMesh));
+  floorMat.userData.outlineParameters = { visible: false };
   disposables.add(floorTex);
   disposables.add(floorMat);
-  disposables.add(floorGeo);
+
+  const mainFloorGeo = new THREE.PlaneGeometry(36, 26);
+  mainFloorGeo.rotateX(-Math.PI / 2);
+
+  const lw = LOFT.maxX - LOFT.minX;
+  const ld = LOFT.maxZ - LOFT.minZ;
+  const lcx = (LOFT.minX + LOFT.maxX) / 2;
+  const lcz = (LOFT.minZ + LOFT.maxZ) / 2;
+  const loftFloorGeo = new THREE.PlaneGeometry(lw, ld);
+  loftFloorGeo.rotateX(-Math.PI / 2);
+  loftFloorGeo.translate(lcx, LOFT.y + 0.01, lcz);
+
+  const mergedFloorGeo = mergeGeometries([mainFloorGeo, loftFloorGeo]);
+  mainFloorGeo.dispose();
+  loftFloorGeo.dispose();
+  if (mergedFloorGeo) {
+    const floorMesh = new THREE.Mesh(mergedFloorGeo, floorMat);
+    floorMesh.receiveShadow = true;
+    root.add(noOutline(floorMesh));
+    disposables.add(mergedFloorGeo);
+  }
 
   const podRugGeo = roundedBox(6.2, 0.02, 4.6, 0.6);
   for (const [rx, rz, rc] of RUG_COORDS) {
-    staticRoot.add(noOutline(mesh(podRugGeo, toon(rc), rx, 0.011, rz, false)));
+    staticRoot.add(
+      noOutline(
+        mesh(podRugGeo, toon(rc, { outline: false }), rx, 0.011, rz, false)
+      )
+    );
   }
   staticRoot.add(
     noOutline(
-      mesh(roundedBox(7, 0.02, 7, 1.2), toon("#ffc6ff"), 13.4, 0.011, 0, false)
+      mesh(
+        roundedBox(7, 0.02, 7, 1.2),
+        toon("#ffc6ff", { outline: false }),
+        13.4,
+        0.011,
+        0,
+        false
+      )
     )
   );
 
@@ -197,7 +229,6 @@ export function buildRoomShell(
 
   const whiteFrameMat = toon("#ffffff");
   const westWinFrameGeo = new THREE.BoxGeometry(0.34, 2.4, 3.2);
-  const westGlassRun = new THREE.Group();
   for (const wz of [-7.5, 0, 7.5]) {
     const frame = mesh(
       westWinFrameGeo,
@@ -212,9 +243,8 @@ export function buildRoomShell(
     const pane = glassPane(3.0, 2.2, glassMats);
     pane.rotation.y = Math.PI / 2;
     pane.position.set(FLOOR.minX - WALL_T / 2 + 0.18, 2.5, wz);
-    westGlassRun.add(pane);
+    staticGlassRoot.add(pane);
   }
-  root.add(mergeStaticGlassRun(westGlassRun, disposables));
 
   staticRoot.add(
     mesh(
@@ -225,16 +255,19 @@ export function buildRoomShell(
       -10.8
     )
   );
-  const exitSign = textPlane("EXIT", {
-    bg: "#1e7838",
-    color: "#ffffff",
-    size: 52,
-    border: "#ffffff",
-  });
-  exitSign.scale.multiplyScalar(0.65);
-  exitSign.position.set(FLOOR.minX + 0.14, 2.65, -10.8);
-  exitSign.rotation.y = Math.PI / 2;
-  root.add(exitSign);
+  addTextLabelToAtlas(
+    atlas,
+    "EXIT",
+    {
+      bg: "#1e7838",
+      color: "#ffffff",
+      size: 52,
+      border: "#ffffff",
+    },
+    [FLOOR.minX + 0.14, 2.65, -10.8],
+    Math.PI / 2,
+    0.65
+  );
 
   return { floorCanvas, floorTex, floorMat };
 }
@@ -249,6 +282,8 @@ export interface SlidingDoorHandle {
 export function buildMeetingRoom(
   root: THREE.Group,
   staticRoot: THREE.Group,
+  staticGlassRoot: THREE.Group,
+  atlas: StaticSignAtlas,
   woodMat: THREE.MeshToonMaterial,
   glassMats: GlassMaterials,
   disposables: Set<Disposable>
@@ -256,9 +291,6 @@ export function buildMeetingRoom(
   const R = MEETING_ROOM;
   const frameMat = toon("#ffffff");
   const slidingDoors: SlidingDoorHandle[] = [];
-
-  const northGlassRun = new THREE.Group();
-  const westGlassRun = new THREE.Group();
 
   const addBar = (
     w: number,
@@ -274,7 +306,6 @@ export function buildMeetingRoom(
     a: number,
     b: number,
     at: number,
-    targetGroup: THREE.Group,
     paneW = 2.2
   ) => {
     const len = b - a;
@@ -287,7 +318,7 @@ export function buildMeetingRoom(
         g.position.set(at, R.height / 2, u);
         g.rotation.y = Math.PI / 2;
       }
-      targetGroup.add(g);
+      staticGlassRoot.add(g);
     }
     for (let i = 0; i <= n; i++) {
       const u = a + i * (len / n);
@@ -296,11 +327,9 @@ export function buildMeetingRoom(
     }
   };
 
-  addGlassRun("x", R.minX, R.door.x0, R.minZ, northGlassRun);
-  addGlassRun("x", R.door.x1, R.maxX, R.minZ, northGlassRun);
-  addGlassRun("z", R.minZ, R.maxZ, R.minX, westGlassRun);
-  root.add(mergeStaticGlassRun(northGlassRun, disposables));
-  root.add(mergeStaticGlassRun(westGlassRun, disposables));
+  addGlassRun("x", R.minX, R.door.x0, R.minZ);
+  addGlassRun("x", R.door.x1, R.maxX, R.minZ);
+  addGlassRun("z", R.minZ, R.maxZ, R.minX);
 
   const doorCx = (R.door.x0 + R.door.x1) / 2;
   const doorHalf = (R.door.x1 - R.door.x0) / 2;
@@ -328,16 +357,19 @@ export function buildMeetingRoom(
     },
   });
 
-  const meetingLabel = textPlane("Meeting Room", {
-    bg: "#2b2d42",
-    color: "#fffaf3",
-    size: 52,
-    border: "#fffaf3",
-  });
-  meetingLabel.scale.multiplyScalar(0.62);
-  meetingLabel.position.set(doorCx, 2.52, R.minZ - 0.13);
-  meetingLabel.rotation.y = Math.PI;
-  root.add(meetingLabel);
+  addTextLabelToAtlas(
+    atlas,
+    "Meeting Room",
+    {
+      bg: "#2b2d42",
+      color: "#fffaf3",
+      size: 52,
+      border: "#fffaf3",
+    },
+    [doorCx, 2.52, R.minZ - 0.13],
+    Math.PI,
+    0.62
+  );
 
   const mTable = new THREE.Group();
   mTable.add(
@@ -381,14 +413,13 @@ export function buildMeetingRoom(
 }
 
 export function buildDirectorLoft(
-  root: THREE.Group,
   staticRoot: THREE.Group,
+  staticGlassRoot: THREE.Group,
+  atlas: StaticSignAtlas,
   wallMat: THREE.MeshToonMaterial,
   trimMat: THREE.MeshToonMaterial,
   woodMat: THREE.MeshToonMaterial,
-  floorMat: THREE.MeshToonMaterial,
-  glassMats: GlassMaterials,
-  disposables: Set<Disposable>
+  glassMats: GlassMaterials
 ): void {
   const lw = LOFT.maxX - LOFT.minX;
   const ld = LOFT.maxZ - LOFT.minZ;
@@ -404,15 +435,7 @@ export function buildDirectorLoft(
       lcz
     )
   );
-  const loftFloorGeo = new THREE.PlaneGeometry(lw, ld);
-  const loftFloor = new THREE.Mesh(loftFloorGeo, floorMat);
-  loftFloor.rotation.x = -Math.PI / 2;
-  loftFloor.position.set(lcx, LOFT.y + 0.01, lcz);
-  loftFloor.receiveShadow = true;
-  root.add(noOutline(loftFloor));
-  disposables.add(loftFloorGeo);
 
-  const loftGlassRun = new THREE.Group();
   for (let i = 0; i < 4; i++) {
     const g = glassPane(lw / 4, LOFT.height, glassMats);
     g.position.set(
@@ -420,20 +443,22 @@ export function buildDirectorLoft(
       LOFT.y + LOFT.height / 2,
       LOFT.minZ + 0.06
     );
-    loftGlassRun.add(g);
+    staticGlassRoot.add(g);
   }
-  root.add(mergeStaticGlassRun(loftGlassRun, disposables));
 
-  const bossSign = textPlane("Director Loft", {
-    bg: "#2b2d42",
-    color: "#fffaf3",
-    size: 60,
-    border: "#fffaf3",
-  });
-  bossSign.scale.multiplyScalar(1.25);
-  bossSign.position.set(lcx, LOFT.y + LOFT.height + 0.2, LOFT.minZ - 0.08);
-  bossSign.rotation.y = Math.PI;
-  root.add(bossSign);
+  addTextLabelToAtlas(
+    atlas,
+    "Director Loft",
+    {
+      bg: "#2b2d42",
+      color: "#fffaf3",
+      size: 60,
+      border: "#fffaf3",
+    },
+    [lcx, LOFT.y + LOFT.height + 0.2, LOFT.minZ - 0.08],
+    Math.PI,
+    1.25
+  );
 
   const stepRun = (STAIRS.toX - STAIRS.fromX) / STAIRS.steps;
   const stepRise = LOFT.y / STAIRS.steps;
@@ -473,11 +498,14 @@ export function buildDirectorLoft(
   bossDesk.position.set(lcx + 0.4, LOFT.y, lcz - 0.2);
   staticRoot.add(bossDesk);
 
-  const bossPlate = textPlane("DIRECTOR", { bg: "#ffd166", size: 46 });
-  bossPlate.scale.multiplyScalar(0.55);
-  bossPlate.position.set(lcx + 0.4, LOFT.y + 0.5, lcz - 0.2 - 0.5);
-  bossPlate.rotation.y = Math.PI;
-  root.add(bossPlate);
+  addTextLabelToAtlas(
+    atlas,
+    "DIRECTOR",
+    { bg: "#ffd166", size: 46 },
+    [lcx + 0.4, LOFT.y + 0.5, lcz - 0.2 - 0.5],
+    Math.PI,
+    0.55
+  );
 
   const scope = new THREE.Group();
   const inkMat = toon(PALETTE.deskLeg);

@@ -170,5 +170,10 @@ export const defaultProviderInvoker: ProviderModelInvoker = async (args) => {
   if (args.provider === "gemini") {
     return invokeGemini(args);
   }
-  return invokeOpenAiCompatible(args);
+  if (args.provider === "openai_api" || args.provider === "kimi_code") {
+    return invokeOpenAiCompatible(args);
+  }
+  throw new Error(
+    `Provider "${args.provider}" is not supported by ai-sdk direct HTTP invoker. Use "jcode" runtime instead.`
+  );
 };

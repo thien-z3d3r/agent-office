@@ -1,15 +1,7 @@
 import React from "react";
 import type { ProviderId } from "@agent-office/protocol";
 import { useOfficeStore } from "../store/office-store.ts";
-
-const PROVIDER_OPTIONS: Array<{ id: ProviderId; label: string }> = [
-  { id: "antigravity", label: "Antigravity (jcode OAuth)" },
-  { id: "claude", label: "Claude (Console API Key)" },
-  { id: "openai_oauth", label: "OpenAI (ChatGPT OAuth)" },
-  { id: "openai_api", label: "OpenAI (Platform API Key)" },
-  { id: "kimi_code", label: "Kimi Code (Coding API Key)" },
-  { id: "gemini", label: "Gemini (Google API Key)" },
-];
+import { PROVIDER_CATALOG } from "../store/provider-catalog.ts";
 
 export interface HudDockProps {
   nightMode: boolean;
@@ -24,7 +16,7 @@ export interface HudDockProps {
   onOpenDispatch: () => void;
 }
 
-export const HudDock: React.FC<HudDockProps> = ({
+export const HudDock: React.FC<HudDockProps> = React.memo(({
   nightMode,
   onToggleNightMode,
   cameraPreset,
@@ -37,9 +29,11 @@ export const HudDock: React.FC<HudDockProps> = ({
   onOpenDispatch,
 }) => {
   const activeProvider = useOfficeStore((s) => s.snapshot.activeProvider);
-  const taskTableCount = useOfficeStore(
-    (s) => Object.keys(s.snapshot.taskTable).length
-  );
+  const taskTableCount = useOfficeStore((s) => {
+    let count = 0;
+    for (const _ in s.snapshot.taskTable) count += 1;
+    return count;
+  });
   const rolesCount = useOfficeStore((s) => s.roles.length);
   const setActiveProvider = useOfficeStore((s) => s.setActiveProvider);
   const replayFixture = useOfficeStore((s) => s.replayFixture);
@@ -59,10 +53,10 @@ export const HudDock: React.FC<HudDockProps> = ({
           title="Single active provider for all agents"
           value={activeProvider}
           onChange={(e) =>
-            void setActiveProvider(e.target.value as ProviderId)
+            void setActiveProvider(e.target.value as ProviderId, undefined, null)
           }
         >
-          {PROVIDER_OPTIONS.map((opt) => (
+          {PROVIDER_CATALOG.map((opt) => (
             <option key={opt.id} value={opt.id}>
               {opt.label}
             </option>
@@ -171,4 +165,6 @@ export const HudDock: React.FC<HudDockProps> = ({
       </button>
     </nav>
   );
-};
+});
+
+HudDock.displayName = "HudDock";

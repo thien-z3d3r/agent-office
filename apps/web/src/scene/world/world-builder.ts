@@ -6,12 +6,13 @@ import type {
   TaskTableRow,
   Ticket,
 } from "@agent-office/protocol";
-import { mergeByMaterial, toon, toonUnique } from "../toon.ts";
+import { mergeStaticWorld, toon, toonUnique } from "../toon.ts";
 import {
   buildDirectorLoft,
   buildMeetingRoom,
   buildRoomShell,
   createGlassMaterials,
+  mergeStaticGlassRun,
   paintPlanks,
 } from "./architecture.ts";
 import { buildOfficeBoards } from "./boards.ts";
@@ -21,6 +22,7 @@ import {
   buildRoleWorkstations,
   buildSubAgentWorkstations,
 } from "./furniture.ts";
+import { StaticSignAtlas } from "./static-atlas.ts";
 
 export interface BuiltOfficeWorld {
   root: THREE.Group;
@@ -52,6 +54,8 @@ export interface BuiltOfficeWorld {
 export function buildAgentOfficeWorld(roles: RoleConfig[]): BuiltOfficeWorld {
   const root = new THREE.Group();
   const staticRoot = new THREE.Group();
+  const staticGlassRoot = new THREE.Group();
+  const atlas = new StaticSignAtlas(2048, 1024);
   const disposables = new Set<Disposable>();
 
   const wallMat = toonUnique(PALETTE.wall);
@@ -61,52 +65,55 @@ export function buildAgentOfficeWorld(roles: RoleConfig[]): BuiltOfficeWorld {
   disposables.add(trimMat);
 
   const glassMats = createGlassMaterials(disposables);
-  const { floorCanvas, floorTex, floorMat } = buildRoomShell(
+  const { floorCanvas, floorTex } = buildRoomShell(
     root,
     staticRoot,
+    staticGlassRoot,
+    atlas,
     wallMat,
     trimMat,
     glassMats,
     disposables
   );
 
-  const boards = buildOfficeBoards(root, staticRoot, disposables);
+  const boards = buildOfficeBoards(root, staticRoot, atlas, disposables);
   const roleDesks = buildRoleWorkstations(
     roles,
     root,
     staticRoot,
-    trimMat,
-    disposables
+    atlas,
+    trimMat
   );
-  buildSubAgentWorkstations(root, staticRoot, trimMat, disposables);
-  buildLoungeAndKitchen(root, staticRoot, disposables);
+  buildSubAgentWorkstations(staticRoot, atlas, trimMat);
+  buildLoungeAndKitchen(staticRoot, atlas);
 
   const slidingDoors = buildMeetingRoom(
     root,
     staticRoot,
+    staticGlassRoot,
+    atlas,
     woodMat,
     glassMats,
     disposables
   );
   buildDirectorLoft(
-    root,
     staticRoot,
+    staticGlassRoot,
+    atlas,
     wallMat,
     trimMat,
     woodMat,
-    floorMat,
-    glassMats,
-    disposables
+    glassMats
   );
 
-  const mergedStatic = mergeByMaterial(staticRoot);
-  mergedStatic.traverse((o) => {
-    const m = o as THREE.Mesh;
-    if (m.isMesh) {
-      disposables.add(m.geometry);
-    }
-  });
+  const keepSeparate = new Set<THREE.Material>([wallMat, trimMat]);
+  const mergedStatic = mergeStaticWorld(staticRoot, keepSeparate, disposables);
   root.add(mergedStatic);
+
+  root.add(mergeStaticGlassRun(staticGlassRoot, disposables));
+
+  const atlasMesh = atlas.buildMesh(disposables);
+  if (atlasMesh) root.add(atlasMesh);
 
   const setNightMode = (night: boolean) => {
     wallMat.color.set(night ? "#c4b9a5" : PALETTE.wall);

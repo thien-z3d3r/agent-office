@@ -5,6 +5,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import {
   ProviderIdSchema,
   RuntimeKindSchema,
+  type RuntimeKind,
   type TicketSize,
 } from "@agent-office/protocol";
 import type { OfficeOrchestrator } from "../../application/orchestrator.ts";
@@ -47,11 +48,16 @@ export async function readJsonBody(
   const raw = Buffer.concat(chunks).toString("utf8").trim();
   if (!raw) return {};
 
+  let parsed: unknown;
   try {
-    return JSON.parse(raw) as Record<string, unknown>;
+    parsed = JSON.parse(raw);
   } catch {
     throw new HttpError(400, "Invalid JSON request body");
   }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new HttpError(400, "JSON request body must be an object");
+  }
+  return parsed as Record<string, unknown>;
 }
 
 function sendJson(
@@ -143,8 +149,12 @@ export async function startOfficeHttpServer(args: {
       }
 
       if (req.method === "GET" && url.pathname === "/api/settings") {
+        const snap = orchestrator.getSnapshot();
         const jcodeAuth = await probeJcodeAuthStatus();
         sendJson(res, 200, {
+          activeProvider: snap.activeProvider,
+          activeRuntime: snap.activeRuntime,
+          activeModel: snap.activeModel ?? null,
           configuredKeys: secrets.listConfiguredKeys(),
           jcodeAuth,
           providers: orchestrator.getConfig().providers,
@@ -220,14 +230,38 @@ export async function startOfficeHttpServer(args: {
           sendJson(res, 400, { error: "Invalid provider id" });
           return;
         }
-        const parsedRuntime = body["runtime"]
-          ? RuntimeKindSchema.safeParse(body["runtime"])
-          : null;
-        const event = orchestrator.setActiveProvider(
-          parsedProvider.data,
-          parsedRuntime?.success ? parsedRuntime.data : undefined
-        );
-        sendJson(res, 200, { ok: true, event });
+        let runtime: RuntimeKind | undefined;
+        if (body["runtime"] !== undefined && body["runtime"] !== null) {
+          const parsedRuntime = RuntimeKindSchema.safeParse(body["runtime"]);
+          if (!parsedRuntime.success) {
+            sendJson(res, 400, { error: "Invalid runtime kind" });
+            return;
+          }
+          runtime = parsedRuntime.data;
+        }
+        let model: string | null | undefined;
+        if (body["model"] !== undefined && body["model"] !== null) {
+          if (typeof body["model"] !== "string") {
+            sendJson(res, 400, { error: "Invalid model name" });
+            return;
+          }
+          model = body["model"];
+        } else if (body["model"] === null) {
+          model = null;
+        }
+        try {
+          const event = orchestrator.setActiveProvider(
+            parsedProvider.data,
+            runtime,
+            model
+          );
+          sendJson(res, 200, { ok: true, event });
+        } catch (err) {
+          throw new HttpError(
+            400,
+            err instanceof Error ? err.message : String(err)
+          );
+        }
         return;
       }
 

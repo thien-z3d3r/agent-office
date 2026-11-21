@@ -8,7 +8,7 @@ export interface TaskTablePanelProps {
   onInspectRole: (roleId: AgentRoleId) => void;
 }
 
-export const TaskTablePanel: React.FC<TaskTablePanelProps> = ({
+export const TaskTablePanel: React.FC<TaskTablePanelProps> = React.memo(({
   onHide,
   onOpenDispatch,
   onInspectRole,
@@ -110,4 +110,6 @@ export const TaskTablePanel: React.FC<TaskTablePanelProps> = ({
       )}
     </section>
   );
-};
+});
+
+TaskTablePanel.displayName = "TaskTablePanel";

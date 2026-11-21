@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import type { AgentRoleId, RoleConfig } from "@agent-office/protocol";
-import { mesh, noOutline, roundedBox, toon } from "../toon.ts";
+import { mesh, roundedBox, toon } from "../toon.ts";
 import { getPreloadedModel, paintModel, palette, piece } from "../models.ts";
 import {
   DESK_BOOKS,
@@ -20,9 +20,9 @@ import {
   WALL_HEIGHT,
   type DeskAnchorSet,
   type DeskPlacement,
-  type Disposable,
   type PlantSpecies,
 } from "./constants.ts";
+import type { StaticSignAtlas } from "./static-atlas.ts";
 
 const paintPlant = palette(PLANT_COLORS);
 const paintDeskProp = palette(DESK_PROP_COLORS);
@@ -41,6 +41,29 @@ const DESK_MODESTY_GEO = new THREE.BoxGeometry(DESK_SIZE.width - 0.3, 0.32, 0.03
 const SIGN_CORD_H = WALL_HEIGHT - (3.35 + 0.6 / 2);
 const SIGN_CORD_GEO = new THREE.CylinderGeometry(0.012, 0.012, SIGN_CORD_H, 5);
 const MONITOR_NECK_GEO = new THREE.CylinderGeometry(0.028, 0.032, 0.24, 8);
+
+const parentDummy = new THREE.Object3D();
+const childDummy = new THREE.Object3D();
+const worldMatScratch = new THREE.Matrix4();
+
+function composeWorldMatrix(
+  px: number,
+  py: number,
+  pz: number,
+  pRotY: number,
+  cx: number,
+  cy: number,
+  cz: number,
+  cRotY = 0
+): THREE.Matrix4 {
+  parentDummy.position.set(px, py, pz);
+  parentDummy.rotation.set(0, pRotY, 0);
+  parentDummy.updateMatrix();
+  childDummy.position.set(cx, cy, cz);
+  childDummy.rotation.set(0, cRotY, 0);
+  childDummy.updateMatrix();
+  return worldMatScratch.multiplyMatrices(parentDummy.matrix, childDummy.matrix);
+}
 
 function plant(species: PlantSpecies, scale = 1): THREE.Group {
   const g = new THREE.Group();
@@ -120,7 +143,7 @@ function pendant(cord = 0.48): THREE.Group {
   lamp.add(
     mesh(
       new THREE.SphereGeometry(0.16, 10, 8),
-      toon("#fff7d6", { emissive: "#ffe08a" }),
+      toon("#fff7d6", { emissive: "#ffe08a", outline: false }),
       0,
       -0.15,
       0,
@@ -194,14 +217,11 @@ function buildDeskFrame(trimMat: THREE.MeshToonMaterial): THREE.Group {
 }
 
 function paintHangingSign(
-  canvas: HTMLCanvasElement,
+  ctx: CanvasRenderingContext2D,
   title: string,
   subtitle: string,
   bgColor: string
 ): void {
-  canvas.width = 768;
-  canvas.height = 256;
-  const ctx = canvas.getContext("2d")!;
   ctx.fillStyle = bgColor;
   ctx.fillRect(0, 0, 768, 256);
   ctx.fillStyle = "#2b2d42";
@@ -224,10 +244,8 @@ function paintHangingSign(
 function addHangingSign(
   role: RoleConfig,
   def: DeskPlacement,
-  root: THREE.Group,
   staticRoot: THREE.Group,
-  signFaceGeo: THREE.PlaneGeometry,
-  disposables: Set<Disposable>
+  atlas: StaticSignAtlas
 ): void {
   const signW = 1.85;
   const signH = 0.6;
@@ -265,31 +283,32 @@ function addHangingSign(
   }
   staticRoot.add(staticSign);
 
-  const canvas = document.createElement("canvas");
-  paintHangingSign(
-    canvas,
-    role.id.toUpperCase(),
-    role.title.split("/")[0]!.trim(),
-    role.tint
+  const rect = atlas.draw(384, 128, (ctx, w, h) => {
+    ctx.save();
+    ctx.scale(w / 768, h / 256);
+    paintHangingSign(
+      ctx,
+      role.id.toUpperCase(),
+      role.title.split("/")[0]!.trim(),
+      role.tint
+    );
+    ctx.restore();
+  });
+
+  const faceW = signW - 0.06;
+  const faceH = signH - 0.06;
+  atlas.addPlane(
+    rect,
+    faceW,
+    faceH,
+    composeWorldMatrix(def.x, 0, def.z, def.rotY, 0, signY, z + 0.024, 0)
   );
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = 4;
-  const mat = new THREE.MeshBasicMaterial({ map: tex });
-  disposables.add(tex);
-  disposables.add(mat);
-
-  const faceGroup = new THREE.Group();
-  faceGroup.position.set(def.x, 0, def.z);
-  faceGroup.rotation.y = def.rotY;
-
-  const face = new THREE.Mesh(signFaceGeo, mat);
-  face.position.set(0, signY, z + 0.024);
-  const rear = new THREE.Mesh(signFaceGeo, mat);
-  rear.position.set(0, signY, z - 0.024);
-  rear.rotation.y = Math.PI;
-  faceGroup.add(noOutline(face), noOutline(rear));
-  root.add(faceGroup);
+  atlas.addPlane(
+    rect,
+    faceW,
+    faceH,
+    composeWorldMatrix(def.x, 0, def.z, def.rotY, 0, signY, z - 0.024, Math.PI)
+  );
 }
 
 function addWorkstationMonitor(
@@ -298,10 +317,8 @@ function addWorkstationMonitor(
   deskX: number,
   deskZ: number,
   deskRotY: number,
-  root: THREE.Group,
   staticRoot: THREE.Group,
-  screenGeo: THREE.PlaneGeometry,
-  disposables: Set<Disposable>
+  atlas: StaticSignAtlas
 ): void {
   const staticDesk = new THREE.Group();
   staticDesk.position.set(deskX, DESK_SIZE.height, deskZ);
@@ -353,55 +370,56 @@ function addWorkstationMonitor(
   );
   staticRoot.add(staticDesk);
 
-  const canvas = document.createElement("canvas");
-  canvas.width = 512;
-  canvas.height = 256;
-  const ctx = canvas.getContext("2d")!;
-  ctx.fillStyle = "#16192b";
-  ctx.fillRect(0, 0, 512, 256);
-  ctx.fillStyle = accentHex;
-  ctx.fillRect(0, 0, 512, 34);
-  ctx.fillStyle = "#16192b";
-  ctx.font = "900 20px ui-monospace, Menlo, Consolas, monospace";
-  ctx.fillText(`SUB-AGENT WORKSTATION // ${label}`, 16, 24);
-  ctx.fillStyle = "#06d6a0";
-  ctx.font = "700 18px ui-monospace, Menlo, Consolas, monospace";
-  ctx.fillText("$ task-runner --watch --worktree", 20, 70);
-  ctx.fillStyle = "#94a3b8";
-  ctx.fillText("Ready to spawn role sub-agent from Task Table", 20, 104);
-  ctx.fillStyle = "#ffd166";
-  ctx.fillRect(20, 132, 210, 14);
-  ctx.fillStyle = "#5bc0eb";
-  ctx.fillRect(20, 160, 320, 14);
-  ctx.fillStyle = "#ff8a5b";
-  ctx.fillRect(20, 188, 160, 14);
+  const rect = atlas.draw(384, 192, (ctx, w, h) => {
+    ctx.save();
+    ctx.scale(w / 512, h / 256);
+    ctx.fillStyle = "#16192b";
+    ctx.fillRect(0, 0, 512, 256);
+    ctx.fillStyle = accentHex;
+    ctx.fillRect(0, 0, 512, 34);
+    ctx.fillStyle = "#16192b";
+    ctx.font = "900 20px ui-monospace, Menlo, Consolas, monospace";
+    ctx.fillText(`SUB-AGENT WORKSTATION // ${label}`, 16, 24);
+    ctx.fillStyle = "#06d6a0";
+    ctx.font = "700 18px ui-monospace, Menlo, Consolas, monospace";
+    ctx.fillText("$ task-runner --watch --worktree", 20, 70);
+    ctx.fillStyle = "#94a3b8";
+    ctx.fillText("Ready to spawn role sub-agent from Task Table", 20, 104);
+    ctx.fillStyle = "#ffd166";
+    ctx.fillRect(20, 132, 210, 14);
+    ctx.fillStyle = "#5bc0eb";
+    ctx.fillRect(20, 160, 320, 14);
+    ctx.fillStyle = "#ff8a5b";
+    ctx.fillRect(20, 188, 160, 14);
+    ctx.restore();
+  });
 
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  const mat = new THREE.MeshBasicMaterial({ map: tex, toneMapped: false });
-  disposables.add(tex);
-  disposables.add(mat);
-
-  const screenHolder = new THREE.Group();
-  screenHolder.position.set(deskX, DESK_SIZE.height, deskZ);
-  screenHolder.rotation.y = deskRotY;
-  const screen = new THREE.Mesh(screenGeo, mat);
-  screen.position.set(0, 0.36, -0.138);
-  screenHolder.add(noOutline(screen));
-  root.add(screenHolder);
+  atlas.addPlane(
+    rect,
+    0.88,
+    0.42,
+    composeWorldMatrix(
+      deskX,
+      DESK_SIZE.height,
+      deskZ,
+      deskRotY,
+      0,
+      0.36,
+      -0.138,
+      0
+    )
+  );
 }
 
 export function buildRoleWorkstations(
   roles: RoleConfig[],
   root: THREE.Group,
   staticRoot: THREE.Group,
-  trimMat: THREE.MeshToonMaterial,
-  disposables: Set<Disposable>
+  atlas: StaticSignAtlas,
+  trimMat: THREE.MeshToonMaterial
 ): Map<AgentRoleId, DeskAnchorSet> {
   const roleDesks = new Map<AgentRoleId, DeskAnchorSet>();
   const roleById = new Map(roles.map((r) => [r.id, r]));
-  const signFaceGeo = new THREE.PlaneGeometry(1.85 - 0.06, 0.6 - 0.06);
-  disposables.add(signFaceGeo);
 
   Object.entries(ROLE_DESK_PLACEMENTS).forEach(([roleIdStr, def], index) => {
     const roleId = roleIdStr as AgentRoleId;
@@ -450,7 +468,7 @@ export function buildRoleWorkstations(
     root.add(anchorGroup);
 
     if (role) {
-      addHangingSign(role, def, root, staticRoot, signFaceGeo, disposables);
+      addHangingSign(role, def, staticRoot, atlas);
     }
 
     const [mx, mz, , workerRotY] = MEETING_OFFSETS[roleId];
@@ -473,13 +491,10 @@ export function buildRoleWorkstations(
 }
 
 export function buildSubAgentWorkstations(
-  root: THREE.Group,
   staticRoot: THREE.Group,
-  trimMat: THREE.MeshToonMaterial,
-  disposables: Set<Disposable>
+  atlas: StaticSignAtlas,
+  trimMat: THREE.MeshToonMaterial
 ): void {
-  const screenGeo = new THREE.PlaneGeometry(0.88, 0.42);
-  disposables.add(screenGeo);
   const { height } = DESK_SIZE;
 
   let extraIdx = 0;
@@ -523,10 +538,8 @@ export function buildSubAgentWorkstations(
           x,
           z,
           rotY,
-          root,
           staticRoot,
-          screenGeo,
-          disposables
+          atlas
         );
         extraIdx++;
       }
@@ -535,15 +548,14 @@ export function buildSubAgentWorkstations(
 }
 
 export function buildLoungeAndKitchen(
-  root: THREE.Group,
   staticRoot: THREE.Group,
-  disposables: Set<Disposable>
+  atlas: StaticSignAtlas
 ): void {
   const kitchenLoaded = getPreloadedModel("kitchen");
   if (kitchenLoaded) {
     paintModel(kitchenLoaded.scene, (name) =>
       name === "Glow"
-        ? toon("#ef476f", { emissive: "#ef476f" })
+        ? toon("#ef476f", { emissive: "#ef476f", outline: false })
         : paintKitchen(name)
     );
     kitchenLoaded.scene.position.set(-14.5, 0, 11.8);
@@ -583,17 +595,16 @@ export function buildLoungeAndKitchen(
   tvBezelGroup.rotation.y = -Math.PI / 2;
   staticRoot.add(tvBezelGroup);
 
-  const tvScreenGeo = new THREE.PlaneGeometry(3.2, 1.8);
-  const tvScreenMat = new THREE.MeshBasicMaterial({ color: "#1b1d2e" });
-  disposables.add(tvScreenGeo);
-  disposables.add(tvScreenMat);
-  const tvScreenHolder = new THREE.Group();
-  tvScreenHolder.position.set(FLOOR.maxX - 0.12, 2.2, 0);
-  tvScreenHolder.rotation.y = -Math.PI / 2;
-  const tvScreen = new THREE.Mesh(tvScreenGeo, tvScreenMat);
-  tvScreen.position.z = 0.08;
-  tvScreenHolder.add(noOutline(tvScreen));
-  root.add(tvScreenHolder);
+  const tvRect = atlas.draw(64, 64, (ctx, w, h) => {
+    ctx.fillStyle = "#1b1d2e";
+    ctx.fillRect(0, 0, w, h);
+  });
+  atlas.addPlane(
+    tvRect,
+    3.2,
+    1.8,
+    composeWorldMatrix(FLOOR.maxX - 0.12, 2.2, 0, -Math.PI / 2, 0, 0, 0.08, 0)
+  );
 
   PLANT_SPOTS.forEach(([px, pz, scale], idx) => {
     const sp = FLOOR_PLANTS[idx % FLOOR_PLANTS.length]!;

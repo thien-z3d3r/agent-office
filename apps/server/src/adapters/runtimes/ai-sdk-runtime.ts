@@ -3,7 +3,10 @@ import fs from "node:fs";
 import path from "node:path";
 import type { AgentEvent } from "@agent-office/protocol";
 import { evaluateCommandPolicy } from "../../domain/command-policy.ts";
-import { PROVIDER_METADATA } from "../../domain/providers.ts";
+import {
+  PROVIDER_METADATA,
+  validateRuntimeForProvider,
+} from "../../domain/providers.ts";
 import { canRoleUseTool, mapToolToAgentStatus } from "../../domain/roles.ts";
 import type {
   AgentRunRequest,
@@ -42,13 +45,31 @@ export class AiSdkRuntimeAdapter implements AgentRuntimePort {
 
   async *run(req: AgentRunRequest): AsyncIterable<AgentEvent> {
     const uid = () => crypto.randomUUID();
-    const provider = req.providerOverride ?? req.role.provider;
+    const provider = req.provider;
+    try {
+      validateRuntimeForProvider(provider, this.kind);
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      yield {
+        id: uid(),
+        ts: Date.now(),
+        t: "agent.status",
+        agentId: req.role.id,
+        runId: req.runId,
+        ticketId: req.ticket.id,
+        status: "error",
+        detail: errMsg,
+        targetZone: req.role.zone,
+      };
+      throw err;
+    }
+
     const providerMeta = PROVIDER_METADATA[provider];
     const keyName = providerMeta.envKey;
     const apiKey = this.secrets.getSecret(keyName);
 
     if (!apiKey || !apiKey.trim()) {
-      const errMsg = `Missing ${keyName} for role ${req.role.id} (${provider})`;
+      const errMsg = `Missing ${keyName} for ${provider} (role ${req.role.id}). Configure it in Providers & OAuth Settings.`;
       yield {
         id: uid(),
         ts: Date.now(),
@@ -63,7 +84,7 @@ export class AiSdkRuntimeAdapter implements AgentRuntimePort {
       throw new Error(errMsg);
     }
 
-    const model = req.role.model ?? providerMeta.defaultModel;
+    const model = req.model?.trim() || providerMeta.defaultModel;
     const systemPrompt = buildRoleSystemPrompt(req.role);
 
     const messages: Array<{ role: "user" | "assistant"; content: string }> = [

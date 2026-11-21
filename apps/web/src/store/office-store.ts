@@ -7,6 +7,7 @@ import {
   type OfficeStateSnapshot,
   type ProviderId,
   type RoleConfig,
+  type RuntimeKind,
 } from "@agent-office/protocol";
 import { DEFAULT_ROLES } from "./default-roles.ts";
 import {
@@ -32,6 +33,7 @@ export interface OfficeStoreState {
   selectedRoleId: AgentRoleId;
   selectedTicketId: string | null;
   reducedMotion: boolean;
+  performanceMode: boolean;
   settingsOpen: boolean;
   configuredKeys: Record<string, boolean>;
   jcodeAuth: Record<string, JcodeAuthInfo>;
@@ -41,6 +43,7 @@ export interface OfficeStoreState {
   setSelectedRole: (id: AgentRoleId) => void;
   setSelectedTicket: (id: string | null) => void;
   toggleReducedMotion: () => void;
+  togglePerformanceMode: () => void;
   setSettingsOpen: (open: boolean) => void;
   clearError: () => void;
   setModelsError: (error: string | null) => void;
@@ -51,16 +54,122 @@ export interface OfficeStoreState {
   resolveApproval: (reqId: string, approved: boolean) => Promise<void>;
   triggerStandup: () => Promise<void>;
   replayFixture: (name: FixtureName) => Promise<void>;
-  setActiveProvider: (provider: ProviderId) => Promise<void>;
+  setActiveProvider: (
+    provider: ProviderId,
+    runtime?: RuntimeKind,
+    model?: string | null
+  ) => Promise<void>;
 }
 
 const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
+const PERFORMANCE_MODE_STORAGE_KEY = "agent-office:performance-mode";
+const EVENT_BATCH_WINDOW_MS = 56;
+const MAX_RECENT_EVENTS = 60;
 
 function getReducedMotionMediaQuery(): MediaQueryList | null {
   if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
     return null;
   }
   return window.matchMedia(REDUCED_MOTION_QUERY);
+}
+
+function loadPerformanceMode(): boolean {
+  try {
+    if (
+      typeof window === "undefined" ||
+      typeof window.localStorage === "undefined"
+    ) {
+      return false;
+    }
+    return window.localStorage.getItem(PERFORMANCE_MODE_STORAGE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function savePerformanceMode(enabled: boolean): void {
+  try {
+    if (
+      typeof window === "undefined" ||
+      typeof window.localStorage === "undefined"
+    ) {
+      return;
+    }
+    window.localStorage.setItem(
+      PERFORMANCE_MODE_STORAGE_KEY,
+      enabled ? "true" : "false"
+    );
+  } catch {
+    // Ignore storage quota or private-browsing errors.
+  }
+}
+
+function prependRecentEvents(
+  prev: readonly AgentEvent[],
+  batch: readonly AgentEvent[],
+  immediate?: AgentEvent,
+  limit = MAX_RECENT_EVENTS
+): AgentEvent[] {
+  const incomingCount = batch.length + (immediate ? 1 : 0);
+  if (incomingCount === 0) return prev as AgentEvent[];
+
+  const total = Math.min(limit, prev.length + incomingCount);
+  const out = new Array<AgentEvent>(total);
+  let writeIdx = 0;
+
+  if (immediate && writeIdx < limit) {
+    out[writeIdx++] = immediate;
+  }
+  for (let i = batch.length - 1; i >= 0 && writeIdx < limit; i--) {
+    out[writeIdx++] = batch[i]!;
+  }
+  for (let i = 0; i < prev.length && writeIdx < limit; i++) {
+    out[writeIdx++] = prev[i]!;
+  }
+  return out;
+}
+
+function enqueueCoalescedEvent(
+  pending: AgentEvent[],
+  event: Extract<AgentEvent, { t: "agent.text" | "usage" }>
+): void {
+  if (event.t === "agent.text") {
+    for (let i = pending.length - 1; i >= 0; i--) {
+      const existing = pending[i]!;
+      if (
+        existing.t === "agent.text" &&
+        existing.agentId === event.agentId &&
+        existing.runId === event.runId
+      ) {
+        pending[i] = {
+          ...event,
+          delta: (existing.delta + event.delta).slice(-1200),
+        };
+        return;
+      }
+    }
+    pending.push({ ...event, delta: event.delta.slice(-1200) });
+    return;
+  }
+
+  for (let i = pending.length - 1; i >= 0; i--) {
+    const existing = pending[i]!;
+    if (
+      existing.t === "usage" &&
+      existing.agentId === event.agentId &&
+      existing.provider === event.provider &&
+      existing.runId === event.runId
+    ) {
+      pending[i] = {
+        ...event,
+        inTok: existing.inTok + event.inTok,
+        outTok: existing.outTok + event.outTok,
+        costUsd: existing.costUsd + event.costUsd,
+      };
+      return;
+    }
+  }
+  pending.push(event);
 }
 
 function toErrorMessage(err: unknown): string {
@@ -77,6 +186,7 @@ export const useOfficeStore = create<OfficeStoreState>((set, get) => {
     selectedRoleId: "be",
     selectedTicketId: null,
     reducedMotion: getReducedMotionMediaQuery()?.matches ?? false,
+    performanceMode: loadPerformanceMode(),
     settingsOpen: false,
     configuredKeys: {},
     jcodeAuth: {},
@@ -89,6 +199,13 @@ export const useOfficeStore = create<OfficeStoreState>((set, get) => {
     toggleReducedMotion: () => {
       reducedMotionUserOverride = true;
       set((s) => ({ reducedMotion: !s.reducedMotion }));
+    },
+    togglePerformanceMode: () => {
+      set((s) => {
+        const next = !s.performanceMode;
+        savePerformanceMode(next);
+        return { performanceMode: next };
+      });
     },
     setSettingsOpen: (open) => set({ settingsOpen: open }),
     clearError: () => set({ lastError: null }),
@@ -106,15 +223,54 @@ export const useOfficeStore = create<OfficeStoreState>((set, get) => {
       };
       mql?.addEventListener?.("change", onMotionChange);
 
+      let pendingBatch: AgentEvent[] = [];
+      let batchTimerId: ReturnType<typeof setTimeout> | null = null;
+
+      const clearBatchTimer = () => {
+        if (batchTimerId !== null) {
+          clearTimeout(batchTimerId);
+          batchTimerId = null;
+        }
+      };
+
+      const commitEvents = (immediateEvent?: AgentEvent) => {
+        clearBatchTimer();
+        const batch = pendingBatch;
+        if (batch.length === 0 && !immediateEvent) return;
+        pendingBatch = [];
+
+        set((prev) => {
+          let nextSnapshot = prev.snapshot;
+          for (let i = 0; i < batch.length; i++) {
+            nextSnapshot = officeReducer(nextSnapshot, batch[i]!);
+          }
+          if (immediateEvent) {
+            nextSnapshot = officeReducer(nextSnapshot, immediateEvent);
+          }
+          return {
+            snapshot: nextSnapshot,
+            recentEvents: prependRecentEvents(
+              prev.recentEvents,
+              batch,
+              immediateEvent,
+              MAX_RECENT_EVENTS
+            ),
+          };
+        });
+      };
+
       const disconnectSocket = connectOfficeSocket({
         onOpen: () => {
           set({ connected: true, lastError: null });
           void get().fetchSettings();
         },
         onClose: () => {
+          commitEvents();
           set({ connected: false });
         },
         onSnapshot: (state, roles) => {
+          clearBatchTimer();
+          pendingBatch = [];
           set({
             snapshot: {
               ...createInitialOfficeState(),
@@ -122,19 +278,29 @@ export const useOfficeStore = create<OfficeStoreState>((set, get) => {
               taskTable: state.taskTable ?? {},
               activeProvider: state.activeProvider ?? "antigravity",
               activeRuntime: state.activeRuntime ?? "jcode",
+              activeModel: state.activeModel ?? null,
             },
             roles: roles?.length ? roles : get().roles,
           });
         },
         onEvent: (event) => {
-          set((prev) => ({
-            snapshot: officeReducer(prev.snapshot, event),
-            recentEvents: [event, ...prev.recentEvents].slice(0, 60),
-          }));
+          if (event.t === "agent.text" || event.t === "usage") {
+            enqueueCoalescedEvent(pendingBatch, event);
+            if (batchTimerId === null) {
+              batchTimerId = setTimeout(() => {
+                batchTimerId = null;
+                commitEvents();
+              }, EVENT_BATCH_WINDOW_MS);
+            }
+            return;
+          }
+          commitEvents(event);
         },
       });
 
       return () => {
+        clearBatchTimer();
+        pendingBatch = [];
         mql?.removeEventListener?.("change", onMotionChange);
         disconnectSocket();
       };
@@ -203,10 +369,20 @@ export const useOfficeStore = create<OfficeStoreState>((set, get) => {
       }
     },
 
-    setActiveProvider: async (provider) => {
+    setActiveProvider: async (provider, runtime, model) => {
       try {
-        await postActiveProvider(provider);
-        set({ lastError: null });
+        const event = await postActiveProvider(provider, runtime, model);
+        set((prev) => ({
+          lastError: null,
+          snapshot: event
+            ? {
+                ...prev.snapshot,
+                activeProvider: event.provider,
+                activeRuntime: event.runtime,
+                activeModel: event.model ?? null,
+              }
+            : prev.snapshot,
+        }));
       } catch (err) {
         set({ lastError: toErrorMessage(err) });
       }

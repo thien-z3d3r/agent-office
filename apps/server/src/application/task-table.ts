@@ -81,23 +81,58 @@ export function buildTaskTableForTicket(
 
 export function buildSyncedTaskTableRows(
   ticket: Ticket,
-  activeProvider: ProviderId
+  activeProvider: ProviderId,
+  existingTaskTable?: Record<string, TaskTableRow>
 ): TaskTableRow[] {
-  return buildTaskTableForTicket(ticket, activeProvider).map((r) => ({
-    ...r,
-    status:
-      ticket.stage === "Done"
+  const rows = buildTaskTableForTicket(ticket, activeProvider);
+  const activeIdx = ticket.assignee
+    ? rows.findIndex((r) => r.role === ticket.assignee)
+    : -1;
+
+  return rows.map((r, idx) => {
+    const existing = existingTaskTable?.[r.id];
+    if (ticket.stage === "Done") {
+      return {
+        ...r,
+        status: "done" as const,
+        outputPreview: `Completed via ${activeProvider} sub-agent ${r.subAgentId}`,
+      };
+    }
+    if (existing) {
+      return {
+        ...r,
+        status: existing.status,
+        outputPreview: existing.outputPreview,
+      };
+    }
+    if (ticket.stage === "Escalated") {
+      const isAssignee = r.role === ticket.assignee;
+      return {
+        ...r,
+        status: isAssignee ? ("failed" as const) : ("queued" as const),
+        outputPreview: isAssignee
+          ? ticket.escalationReason ?? `Escalated on ${activeProvider}`
+          : "",
+      };
+    }
+    const status =
+      activeIdx >= 0 && idx < activeIdx
         ? ("done" as const)
-        : ticket.stage === "Escalated"
-          ? ("failed" as const)
-          : ticket.assignee === r.role
-            ? ("running" as const)
-            : ("done" as const),
-    outputPreview:
-      ticket.stage === "Done"
-        ? `Completed via ${activeProvider} sub-agent ${r.subAgentId}`
-        : `Active on ${activeProvider}`,
-  }));
+        : idx === activeIdx
+          ? ("running" as const)
+          : ("queued" as const);
+    const outputPreview =
+      status === "done"
+        ? `Completed by ${r.subAgentId}`
+        : status === "running"
+          ? `Active on ${activeProvider}`
+          : "";
+    return {
+      ...r,
+      status,
+      outputPreview,
+    };
+  });
 }
 
 export function buildUpdatedTaskRow(
@@ -115,6 +150,7 @@ export function buildUpdatedTaskRow(
   return {
     ...row,
     provider: activeProvider,
+    subAgentId: `sub-${activeProvider}-${row.role}-${row.order}`,
     status,
     outputPreview: outputPreview ?? row.outputPreview,
     updatedAt: Date.now(),

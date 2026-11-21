@@ -18,7 +18,9 @@ export interface AgentRunRequest {
   runId: string;
   ticket: Ticket;
   role: RoleConfig;
-  providerOverride?: ProviderId;
+  provider: ProviderId;
+  runtime?: RuntimeKind;
+  model?: string;
   prompt: string;
   worktreePath: string;
   signal: AbortSignal;

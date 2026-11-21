@@ -8,8 +8,7 @@ export interface AgentInspectorModalProps {
   onClose: () => void;
 }
 
-export const AgentInspectorModal: React.FC<AgentInspectorModalProps> = ({
-  open,
+const AgentInspectorModalContent: React.FC<{ onClose: () => void }> = ({
   onClose,
 }) => {
   const roles = useOfficeStore((s) => s.roles);
@@ -26,7 +25,8 @@ export const AgentInspectorModal: React.FC<AgentInspectorModalProps> = ({
       if (selected) return selected;
     }
     let latest: Ticket | null = null;
-    for (const ticket of Object.values(s.snapshot.tickets)) {
+    for (const id in s.snapshot.tickets) {
+      const ticket = s.snapshot.tickets[id]!;
       if (!latest || ticket.updatedAt > latest.updatedAt) latest = ticket;
     }
     return latest;
@@ -112,7 +112,7 @@ export const AgentInspectorModal: React.FC<AgentInspectorModalProps> = ({
 
   return (
     <ModalDialog
-      open={open}
+      open
       titleId="inspector-modal-title"
       title={`${selectedRole.id.toUpperCase()} · ${selectedRole.title}`}
       closeLabel="Close Agent Inspector modal"
@@ -194,3 +194,11 @@ export const AgentInspectorModal: React.FC<AgentInspectorModalProps> = ({
     </ModalDialog>
   );
 };
+
+export const AgentInspectorModal: React.FC<AgentInspectorModalProps> =
+  React.memo(({ open, onClose }) => {
+    if (!open) return null;
+    return <AgentInspectorModalContent onClose={onClose} />;
+  });
+
+AgentInspectorModal.displayName = "AgentInspectorModal";

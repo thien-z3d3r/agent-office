@@ -231,6 +231,7 @@ export function officeReducer(
         ...state,
         activeProvider: event.provider,
         activeRuntime: event.runtime,
+        activeModel: event.model ?? null,
         eventCount,
       };
     }
@@ -239,10 +240,30 @@ export function officeReducer(
         return { ...state, eventCount };
       }
       const nextTaskTable = { ...state.taskTable };
-      const nextAgents = { ...state.agents };
+      let nextAgents: Record<AgentRoleId, AgentLiveState> | undefined;
       for (const row of event.rows) {
         nextTaskTable[row.id] = row;
-        const prevAgent = nextAgents[row.role];
+        const prevAgent = (nextAgents ?? state.agents)[row.role];
+        if (
+          prevAgent.currentTicketId !== null &&
+          prevAgent.currentTicketId !== row.ticketId
+        ) {
+          const prevTicket = state.tickets[prevAgent.currentTicketId];
+          const prevTicketActive = prevTicket
+            ? prevTicket.stage !== "Done" && prevTicket.stage !== "Escalated"
+            : prevAgent.status !== "idle" &&
+              prevAgent.status !== "done" &&
+              prevAgent.status !== "error";
+          const rowTicket = state.tickets[row.ticketId];
+          const rowTicketTerminal =
+            rowTicket?.stage === "Done" || rowTicket?.stage === "Escalated";
+          if (prevTicketActive || rowTicketTerminal) {
+            continue;
+          }
+        }
+        if (!nextAgents) {
+          nextAgents = { ...state.agents };
+        }
         nextAgents[row.role] = {
           ...prevAgent,
           subAgentId: row.subAgentId,
@@ -257,7 +278,7 @@ export function officeReducer(
       return {
         ...state,
         taskTable: nextTaskTable,
-        agents: nextAgents,
+        agents: nextAgents ?? state.agents,
         eventCount,
       };
     }

@@ -3,6 +3,7 @@ import type {
   OfficeStateSnapshot,
   ProviderId,
   RoleConfig,
+  RuntimeKind,
   TicketSize,
 } from "@agent-office/protocol";
 
@@ -14,6 +15,9 @@ export interface JcodeAuthInfo {
 }
 
 export interface OfficeSettingsResponse {
+  activeProvider?: ProviderId;
+  activeRuntime?: RuntimeKind;
+  activeModel?: string | null;
   configuredKeys: Record<string, boolean>;
   jcodeAuth: Record<string, JcodeAuthInfo>;
 }
@@ -50,6 +54,9 @@ export async function fetchOfficeSettings(): Promise<OfficeSettingsResponse> {
   const res = await ensureOk(await fetch("/api/settings"));
   const data = (await res.json()) as Partial<OfficeSettingsResponse>;
   return {
+    activeProvider: data.activeProvider,
+    activeRuntime: data.activeRuntime,
+    activeModel: data.activeModel ?? null,
     configuredKeys: data.configuredKeys ?? {},
     jcodeAuth: data.jcodeAuth ?? {},
   };
@@ -95,14 +102,39 @@ export async function postFixture(name: FixtureName): Promise<void> {
   await ensureOk(await fetch(`/api/fixtures/${name}`, { method: "POST" }));
 }
 
-export async function postActiveProvider(provider: ProviderId): Promise<void> {
-  await ensureOk(
+export type ProviderChangedEvent = Extract<
+  AgentEvent,
+  { t: "provider.changed" }
+>;
+
+export async function postActiveProvider(
+  provider: ProviderId,
+  runtime?: RuntimeKind,
+  model?: string | null
+): Promise<ProviderChangedEvent | null> {
+  const body: {
+    provider: ProviderId;
+    runtime?: RuntimeKind;
+    model?: string | null;
+  } = { provider };
+  if (runtime !== undefined) body.runtime = runtime;
+  if (model !== undefined) body.model = model;
+  const res = await ensureOk(
     await fetch("/api/provider", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ provider }),
+      body: JSON.stringify(body),
     })
   );
+  try {
+    const data = (await res.json()) as { event?: unknown };
+    const ev = data?.event as Partial<ProviderChangedEvent> | undefined;
+    if (ev && ev.t === "provider.changed" && ev.provider && ev.runtime) {
+      return ev as ProviderChangedEvent;
+    }
+  } catch {
+  }
+  return null;
 }
 
 type ServerMessage =

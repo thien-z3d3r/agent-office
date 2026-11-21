@@ -1,12 +1,12 @@
 import React, { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { OutlineEffect } from "three/addons/effects/OutlineEffect.js";
 import { Timer } from "three/addons/misc/Timer.js";
 import type { AgentRoleId } from "@agent-office/protocol";
 import { useOfficeStore } from "../store/office-store.ts";
 import { preloadOfficeModels } from "./models.ts";
 import { disposeSharedToonCache } from "./toon.ts";
+import { ToonOutlineEffect } from "./toon-outline.ts";
 import {
   buildAgentOfficeWorld,
   type BuiltOfficeWorld,
@@ -14,8 +14,8 @@ import {
 import {
   ConfettiSystem,
   OfficeDog,
-  ToonLaptop,
-  ToonWorker,
+  ToonLaptopPool,
+  ToonWorkerPool,
 } from "./toon-actors.ts";
 
 export interface OfficeCanvasProps {
@@ -30,9 +30,11 @@ function disposeObjectTree(root: THREE.Object3D): void {
   const materials = new Set<THREE.Material>();
   const textures = new Set<THREE.Texture>();
   const skeletons = new Set<THREE.Skeleton>();
+  const instanced = new Set<THREE.InstancedMesh>();
 
   root.traverse((obj) => {
-    const meshObj = obj as THREE.Mesh & THREE.SkinnedMesh;
+    const meshObj = obj as THREE.Mesh & THREE.SkinnedMesh & THREE.InstancedMesh;
+    if (meshObj.isInstancedMesh) instanced.add(meshObj);
     if (meshObj.geometry) geometries.add(meshObj.geometry);
     if (meshObj.isSkinnedMesh && meshObj.skeleton) {
       skeletons.add(meshObj.skeleton);
@@ -53,13 +55,14 @@ function disposeObjectTree(root: THREE.Object3D): void {
     }
   }
 
+  for (const im of instanced) im.dispose();
   for (const tex of textures) tex.dispose();
   for (const mat of materials) mat.dispose();
   for (const geo of geometries) geo.dispose();
   for (const skel of skeletons) skel.dispose();
 }
 
-export const OfficeCanvas: React.FC<OfficeCanvasProps> = ({
+export const OfficeCanvas: React.FC<OfficeCanvasProps> = React.memo(({
   nightMode,
   cameraPreset,
   onReady,
@@ -80,6 +83,8 @@ export const OfficeCanvas: React.FC<OfficeCanvasProps> = ({
     camera: THREE.PerspectiveCamera | null;
     controls: OrbitControls | null;
     dog: OfficeDog | null;
+    workerPool: ToonWorkerPool | null;
+    laptopPool: ToonLaptopPool | null;
   }>({
     world: null,
     scene: null,
@@ -88,6 +93,8 @@ export const OfficeCanvas: React.FC<OfficeCanvasProps> = ({
     camera: null,
     controls: null,
     dog: null,
+    workerPool: null,
+    laptopPool: null,
   });
 
   useEffect(() => {
@@ -135,6 +142,7 @@ export const OfficeCanvas: React.FC<OfficeCanvasProps> = ({
       snapshot: initialStore.snapshot,
       roles: initialStore.roles,
       reducedMotion: initialStore.reducedMotion,
+      performanceMode: initialStore.performanceMode,
     };
 
     const renderer = new THREE.WebGLRenderer({
@@ -142,15 +150,11 @@ export const OfficeCanvas: React.FC<OfficeCanvasProps> = ({
       antialias: true,
       powerPreference: "high-performance",
     });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.setSize(window.innerWidth, window.innerHeight, false);
-    renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFShadowMap;
     renderer.shadowMap.autoUpdate = false;
-    renderer.shadowMap.needsUpdate = true;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
 
-    const effect = new OutlineEffect(renderer, {
+    const effect = new ToonOutlineEffect(renderer, {
       defaultThickness: 0.0032,
       defaultColor: [0.17, 0.18, 0.26],
     });
@@ -171,7 +175,7 @@ export const OfficeCanvas: React.FC<OfficeCanvasProps> = ({
 
     const controls = new OrbitControls(camera, canvas);
     controls.target.set(-5.0, 0.8, -1.5);
-    controls.enableDamping = true;
+    controls.enableDamping = !initialStore.reducedMotion;
     controls.dampingFactor = 0.08;
     controls.maxPolarAngle = Math.PI / 2.08;
     controls.minDistance = 3.5;
@@ -190,8 +194,7 @@ export const OfficeCanvas: React.FC<OfficeCanvasProps> = ({
       initialNight ? 0.95 : 2.2
     );
     sun.position.set(-8, 18, 10);
-    sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.mapSize.set(1024, 1024);
     Object.assign(sun.shadow.camera, {
       left: -32,
       right: 32,
@@ -204,14 +207,25 @@ export const OfficeCanvas: React.FC<OfficeCanvasProps> = ({
     sun.shadow.normalBias = 0.03;
     scene.add(sun);
 
-    const workers = new Map<
-      AgentRoleId,
-      {
-        worker: ToonWorker;
-        laptop: ToonLaptop;
-        prevStatus: string;
+    let shadowPending = true;
+    let forceShadow = false;
+    let lastShadowUpdate = 0;
+
+    const applyRenderQuality = (perfMode: boolean) => {
+      const dpr = perfMode ? 1 : Math.min(window.devicePixelRatio, 1.5);
+      renderer.setPixelRatio(dpr);
+      renderer.setSize(window.innerWidth, window.innerHeight, false);
+      effect.enabled = !perfMode;
+      renderer.shadowMap.enabled = !perfMode;
+      sun.castShadow = !perfMode;
+      if (!perfMode) {
+        shadowPending = true;
+        forceShadow = true;
       }
-    >();
+    };
+    applyRenderQuality(storeState.performanceMode);
+
+    const prevStatuses = new Map<AgentRoleId, string>();
     const confetti = new ConfettiSystem();
     scene.add(confetti.group);
 
@@ -261,7 +275,8 @@ export const OfficeCanvas: React.FC<OfficeCanvasProps> = ({
     const wake = (needsShadow = false) => {
       if (disposed) return;
       if (needsShadow) {
-        renderer.shadowMap.needsUpdate = true;
+        shadowPending = true;
+        forceShadow = true;
       }
       if (!isHidden()) {
         startLoop();
@@ -277,18 +292,19 @@ export const OfficeCanvas: React.FC<OfficeCanvasProps> = ({
 
       timer.update();
       const dt = Math.min(timer.getDelta(), 0.1);
-      const now = Date.now();
+      const nowPerf = performance.now();
       const {
         snapshot: snap,
         roles: currentRoles,
         reducedMotion: isReduced,
+        performanceMode: isPerfMode,
       } = storeState;
-      const builtWorld = worldRef.current.world;
+      const { world: builtWorld, workerPool, laptopPool } = worldRef.current;
 
       let sceneActive = false;
       let shadowDirty = false;
 
-      if (builtWorld) {
+      if (builtWorld && workerPool && laptopPool) {
         let hasNeedy = false;
         const doors = builtWorld.slidingDoors;
         if (doorNear.length !== doors.length) {
@@ -298,22 +314,18 @@ export const OfficeCanvas: React.FC<OfficeCanvasProps> = ({
         }
 
         for (const role of currentRoles) {
-          const entry = workers.get(role.id);
           const desk = builtWorld.roleDesks.get(role.id);
           const live = snap.agents[role.id];
-          if (!entry || !desk || !live) continue;
+          const pos = workerPool.getPosition(role.id);
+          if (!desk || !live || !pos) continue;
 
-          if (live.status === "done" && entry.prevStatus !== "done") {
-            confetti.burst(
-              entry.worker.root.position.x,
-              entry.worker.root.position.y,
-              entry.worker.root.position.z
-            );
+          if (live.status === "done" && prevStatuses.get(role.id) !== "done") {
+            confetti.burst(pos.x, pos.y, pos.z);
           }
-          entry.prevStatus = live.status;
+          prevStatuses.set(role.id, live.status);
 
           if (live.status === "waiting_approval" && !hasNeedy) {
-            needyPosScratch.copy(entry.worker.root.position);
+            needyPosScratch.copy(pos);
             hasNeedy = true;
           }
 
@@ -325,48 +337,64 @@ export const OfficeCanvas: React.FC<OfficeCanvasProps> = ({
             desk.seatAnchor.getWorldPosition(targetVec);
           }
 
-          const pos = entry.worker.root.position;
           const dx = targetVec.x - pos.x;
           const dz = targetVec.z - pos.z;
           const dist = Math.hypot(dx, dz);
 
           let workerMoved = false;
+          let nextX = pos.x;
+          let nextY = pos.y;
+          let nextZ = pos.z;
+          let nextRotY = desiredRotY;
+
           if (isReduced || dist < 0.05) {
-            if (
-              dist > 0.001 ||
-              Math.abs(entry.worker.root.rotation.y - desiredRotY) > 0.001
-            ) {
+            if (dist > 0.001) {
               workerMoved = true;
             }
-            pos.copy(targetVec);
-            entry.worker.root.rotation.y = desiredRotY;
+            nextX = targetVec.x;
+            nextY = targetVec.y;
+            nextZ = targetVec.z;
+            nextRotY = desiredRotY;
           } else {
             const speed = 4.2;
             const step = Math.min(dist, speed * dt);
-            pos.x += (dx / dist) * step;
-            pos.z += (dz / dist) * step;
-            entry.worker.root.rotation.y = Math.atan2(dx, dz);
+            nextX = pos.x + (dx / dist) * step;
+            nextZ = pos.z + (dz / dist) * step;
+            nextRotY = Math.atan2(dx, dz);
             workerMoved = true;
             sceneActive = true;
           }
 
+          workerPool.setTransform(role.id, nextX, nextY, nextZ, nextRotY);
+
           for (let i = 0; i < doors.length; i++) {
             const d = doors[i]!;
-            if (!doorNear[i] && Math.hypot(pos.x - d.x, pos.z - d.z) < 2.6) {
+            if (!doorNear[i] && Math.hypot(nextX - d.x, nextZ - d.z) < 2.6) {
               doorNear[i] = true;
             }
           }
 
-          const workerRes = entry.worker.update(
+          const workerRes = workerPool.updateWorker(
+            role.id,
             dt,
             live,
             isReduced,
-            snap.activeProvider
+            snap.activeProvider,
+            nowPerf
           );
-          const laptopMoved = entry.laptop.update(dt, live, isReduced);
+          const laptopMoved = laptopPool.updateLaptop(
+            role.id,
+            dt,
+            live,
+            isReduced,
+            nowPerf
+          );
           if (workerRes.animating || laptopMoved) sceneActive = true;
           if (workerMoved || workerRes.shadowDirty) shadowDirty = true;
         }
+
+        workerPool.commit();
+        laptopPool.commit();
 
         for (let i = 0; i < doors.length; i++) {
           const d = doors[i]!;
@@ -392,8 +420,8 @@ export const OfficeCanvas: React.FC<OfficeCanvasProps> = ({
         confetti.update(dt);
         if (confetti.isActive) sceneActive = true;
 
-        if (now - lastBoardSync > 450) {
-          lastBoardSync = now;
+        if (nowPerf - lastBoardSync > 450) {
+          lastBoardSync = nowPerf;
           builtWorld.updateBoards(
             snap.tickets,
             snap.taskTable,
@@ -405,7 +433,20 @@ export const OfficeCanvas: React.FC<OfficeCanvasProps> = ({
 
       const controlsActive = controls.update();
       if (shadowDirty) {
+        shadowPending = true;
+      }
+      if (
+        !isPerfMode &&
+        shadowPending &&
+        (forceShadow ||
+          lastShadowUpdate === 0 ||
+          nowPerf - lastShadowUpdate >= 100 ||
+          !sceneActive)
+      ) {
         renderer.shadowMap.needsUpdate = true;
+        shadowPending = false;
+        forceShadow = false;
+        lastShadowUpdate = nowPerf;
       }
       effect.render(scene, camera);
 
@@ -427,17 +468,27 @@ export const OfficeCanvas: React.FC<OfficeCanvasProps> = ({
       if (
         next.snapshot === prev.snapshot &&
         next.roles === prev.roles &&
-        next.reducedMotion === prev.reducedMotion
+        next.reducedMotion === prev.reducedMotion &&
+        next.performanceMode === prev.performanceMode
       ) {
         return;
       }
       storeState.snapshot = next.snapshot;
       storeState.roles = next.roles;
       storeState.reducedMotion = next.reducedMotion;
+      storeState.performanceMode = next.performanceMode;
+
+      let needsShadow = true;
       if (next.reducedMotion !== prev.reducedMotion) {
+        controls.enableDamping = !next.reducedMotion;
+        controls.update();
         worldRef.current.dog?.unfreezeIfNeeded(next.reducedMotion);
       }
-      wake(true);
+      if (next.performanceMode !== prev.performanceMode) {
+        applyRenderQuality(next.performanceMode);
+        needsShadow = !next.performanceMode;
+      }
+      wake(needsShadow);
     });
 
     useOfficeStore.getState().setModelsError(null);
@@ -456,24 +507,20 @@ export const OfficeCanvas: React.FC<OfficeCanvasProps> = ({
         const dog = new OfficeDog();
         scene.add(dog.root);
 
-        const seatWorld = new THREE.Vector3();
+        const workerPool = new ToonWorkerPool(
+          storeState.roles,
+          builtWorld.roleDesks
+        );
+        scene.add(workerPool.root);
+
+        const laptopPool = new ToonLaptopPool(
+          storeState.roles,
+          builtWorld.roleDesks
+        );
+        scene.add(laptopPool.root);
+
         for (const role of storeState.roles) {
-          const desk = builtWorld.roleDesks.get(role.id);
-          if (!desk) continue;
-          const worker = new ToonWorker(role);
-          desk.seatAnchor.getWorldPosition(seatWorld);
-          worker.root.position.copy(seatWorld);
-          worker.root.rotation.y = desk.def.rotY + Math.PI;
-          scene.add(worker.root);
-
-          const laptop = new ToonLaptop(role.tint);
-          desk.laptopAnchor.add(laptop.root);
-
-          workers.set(role.id, {
-            worker,
-            laptop,
-            prevStatus: "idle",
-          });
+          prevStatuses.set(role.id, "idle");
         }
 
         worldRef.current = {
@@ -484,6 +531,8 @@ export const OfficeCanvas: React.FC<OfficeCanvasProps> = ({
           camera,
           controls,
           dog,
+          workerPool,
+          laptopPool,
         };
         builtWorld.setNightMode(propsRef.current.nightMode);
         builtWorld.updateBoards(
@@ -492,7 +541,7 @@ export const OfficeCanvas: React.FC<OfficeCanvasProps> = ({
           storeState.snapshot.activeProvider,
           storeState.snapshot.lastStandup?.summary ?? null
         );
-        lastBoardSync = Date.now();
+        lastBoardSync = performance.now();
         callbacksRef.current.onReady();
         wake(true);
       } catch (err) {
@@ -530,13 +579,10 @@ export const OfficeCanvas: React.FC<OfficeCanvasProps> = ({
         }
       }
 
-      for (const [roleId, entry] of workers) {
-        const hits = raycaster.intersectObject(entry.worker.root, true);
-        if (hits.length > 0) {
-          useOfficeStore.getState().setSelectedRole(roleId);
-          callbacksRef.current.onSelectAgentModal(roleId);
-          return;
-        }
+      const roleId = worldRef.current.workerPool?.pickRole(raycaster) ?? null;
+      if (roleId) {
+        useOfficeStore.getState().setSelectedRole(roleId);
+        callbacksRef.current.onSelectAgentModal(roleId);
       }
     };
     const onWheel = () => wake(false);
@@ -557,7 +603,10 @@ export const OfficeCanvas: React.FC<OfficeCanvasProps> = ({
     const onResize = () => {
       const w = window.innerWidth;
       const h = window.innerHeight;
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      const dpr = storeState.performanceMode
+        ? 1
+        : Math.min(window.devicePixelRatio, 1.5);
+      renderer.setPixelRatio(dpr);
       renderer.setSize(w, h, false);
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
@@ -598,14 +647,14 @@ export const OfficeCanvas: React.FC<OfficeCanvasProps> = ({
       controls.dispose();
 
       worldRef.current.dog?.dispose();
-      for (const entry of workers.values()) {
-        entry.worker.dispose();
-      }
-      workers.clear();
+      worldRef.current.workerPool?.dispose();
+      worldRef.current.laptopPool?.dispose();
+      prevStatuses.clear();
       confetti.dispose();
       worldRef.current.world?.dispose();
       sun.shadow.dispose();
       disposeObjectTree(scene);
+      scene.clear();
       disposeSharedToonCache();
 
       worldRef.current = {
@@ -616,8 +665,11 @@ export const OfficeCanvas: React.FC<OfficeCanvasProps> = ({
         camera: null,
         controls: null,
         dog: null,
+        workerPool: null,
+        laptopPool: null,
       };
       effect.enabled = false;
+      effect.dispose();
       renderer.dispose();
     };
   }, []);
@@ -631,4 +683,6 @@ export const OfficeCanvas: React.FC<OfficeCanvasProps> = ({
       data-testid="office-webgl-canvas"
     />
   );
-};
+});
+
+OfficeCanvas.displayName = "OfficeCanvas";

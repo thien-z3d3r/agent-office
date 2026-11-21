@@ -1,7 +1,7 @@
 import React from "react";
 import { useOfficeStore } from "../store/office-store.ts";
 
-export const ErrorBanner: React.FC = () => {
+export const ErrorBanner: React.FC = React.memo(() => {
   const connected = useOfficeStore((s) => s.connected);
   const lastError = useOfficeStore((s) => s.lastError);
   const clearError = useOfficeStore((s) => s.clearError);
@@ -61,4 +61,6 @@ export const ErrorBanner: React.FC = () => {
       )}
     </div>
   );
-};
+});
+
+ErrorBanner.displayName = "ErrorBanner";

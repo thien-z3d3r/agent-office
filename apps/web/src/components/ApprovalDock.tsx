@@ -1,11 +1,11 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { useOfficeStore } from "../store/office-store.ts";
 
-export const ApprovalDock: React.FC = () => {
+export const ApprovalDock: React.FC = React.memo(() => {
   const approvals = useOfficeStore((s) => s.snapshot.approvals);
   const resolveApproval = useOfficeStore((s) => s.resolveApproval);
 
-  const approvalsList = Object.values(approvals);
+  const approvalsList = useMemo(() => Object.values(approvals), [approvals]);
   if (approvalsList.length === 0) return null;
 
   return (
@@ -47,4 +47,6 @@ export const ApprovalDock: React.FC = () => {
       ))}
     </section>
   );
-};
+});
+
+ApprovalDock.displayName = "ApprovalDock";

@@ -52,9 +52,6 @@ test("IntentQueue enforces 600ms minimum dwell and collapses backlogs larger tha
     zone: "planning_pod_pm",
     tint: "#ec4899",
     accessory: "sticky_pad",
-    runtime: "ai-sdk" as const,
-    provider: "kimi_code" as const,
-    fallback: { runtime: "ai-sdk" as const, provider: "gemini" as const },
     tools: ["read"],
     allowCommands: [],
   };

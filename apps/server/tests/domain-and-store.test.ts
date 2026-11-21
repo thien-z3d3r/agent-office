@@ -23,10 +23,11 @@ import {
   transitionTicket,
   DEFAULT_WORKFLOW_LIMITS,
 } from "../src/domain/ticket-machine.ts";
+import { canRoleUseTool } from "../src/domain/roles.ts";
 import {
-  canRoleUseTool,
-  selectCrossVendorReviewerProvider,
-} from "../src/domain/roles.ts";
+  resolveProviderDefaults,
+  validateRuntimeForProvider,
+} from "../src/domain/providers.ts";
 import { SQLiteOfficeStore } from "../src/adapters/sqlite/sqlite-store.ts";
 import { loadJsonlFixture } from "../src/adapters/runtimes/scripted-runtime.ts";
 
@@ -221,16 +222,13 @@ test("Ticket workflow state machine enforces S/M/L routing, review/QA loop caps,
   assert.equal(lTicket.stage, "InProgress");
 });
 
-test("Role tool curation and cross-vendor reviewer provider selection work", () => {
+test("Role tool curation and single-provider runtime validation work", () => {
   const pmRole: RoleConfig = {
     id: "pm",
     title: "Product Manager",
     zone: "planning_pod_pm",
     tint: "#ec4899",
     accessory: "sticky_pad",
-    runtime: "ai-sdk",
-    provider: "kimi_code",
-    fallback: { runtime: "ai-sdk", provider: "gemini" },
     tools: ["read", "grep", "write:docs/specs/**", "board.comment"],
     allowCommands: [],
   };
@@ -248,30 +246,33 @@ test("Role tool curation and cross-vendor reviewer provider selection work", () 
     false
   );
 
-  const reviewerRole: RoleConfig = {
-    id: "reviewer",
-    title: "Code Reviewer",
-    zone: "review_desk",
-    tint: "#ef4444",
-    accessory: "magnifying_glass",
-    runtime: "ai-sdk",
-    provider: "kimi_code",
-    fallback: { runtime: "ai-sdk", provider: "openai_api" },
-    tools: ["read", "grep", "git.diff", "review.submit"],
-    allowCommands: ["git diff *"],
-  };
+  assert.doesNotThrow(() => validateRuntimeForProvider("antigravity", "jcode"));
+  assert.doesNotThrow(() => validateRuntimeForProvider("claude", "ai-sdk"));
+  assert.doesNotThrow(() => validateRuntimeForProvider("kimi_code", "jcode"));
+  assert.doesNotThrow(() => validateRuntimeForProvider("gemini", "scripted"));
 
-  const selectedForKimiAuthor = selectCrossVendorReviewerProvider(
-    reviewerRole,
-    "kimi_code"
+  assert.throws(
+    () => validateRuntimeForProvider("antigravity", "ai-sdk"),
+    /jcode OAuth/
   );
-  assert.equal(selectedForKimiAuthor.provider, "openai_api");
+  assert.throws(
+    () => validateRuntimeForProvider("openai_oauth", "ai-sdk"),
+    /jcode OAuth/
+  );
+  assert.throws(
+    () => validateRuntimeForProvider("kimi_code", "claude-agent-sdk"),
+    /not supported/
+  );
 
-  const selectedForAntigravityAuthor = selectCrossVendorReviewerProvider(
-    reviewerRole,
-    "antigravity"
-  );
-  assert.equal(selectedForAntigravityAuthor.provider, "kimi_code");
+  const claudeDefaults = resolveProviderDefaults("claude", undefined, "  claude-opus-4-1  ");
+  assert.equal(claudeDefaults.runtime, "ai-sdk");
+  assert.equal(claudeDefaults.model, "claude-opus-4-1");
+
+  const blankModelDefaults = resolveProviderDefaults("kimi_code", "jcode", "   ");
+  assert.equal(blankModelDefaults.runtime, "jcode");
+  assert.equal(blankModelDefaults.model, null);
+
+  assert.throws(() => resolveProviderDefaults("antigravity", "ai-sdk"));
 });
 
 test("SQLiteOfficeStore persists events, encrypts secrets, marks interrupted runs, and replays JSONL fixtures deterministically", () => {

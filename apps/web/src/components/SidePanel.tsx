@@ -15,7 +15,7 @@ export interface SidePanelProps {
   onOpenDispatch: () => void;
 }
 
-export const SidePanel: React.FC<SidePanelProps> = ({
+export const SidePanel: React.FC<SidePanelProps> = React.memo(({
   showWorkersPanel,
   onHideWorkersPanel,
   showQueuePanel,
@@ -52,4 +52,6 @@ export const SidePanel: React.FC<SidePanelProps> = ({
       {showSpendPanel && <SpendPanel onHide={onHideSpendPanel} />}
     </aside>
   );
-};
+});
+
+SidePanel.displayName = "SidePanel";

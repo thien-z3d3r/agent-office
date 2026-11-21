@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import type { AgentEvent } from "@agent-office/protocol";
 import { evaluateCommandPolicy } from "../../domain/command-policy.ts";
+import { validateRuntimeForProvider } from "../../domain/providers.ts";
 import { mapToolToAgentStatus } from "../../domain/roles.ts";
 import type { AgentRunRequest, AgentRuntimePort } from "../../ports/index.ts";
 
@@ -50,6 +51,24 @@ export class ClaudeAgentSdkRuntimeAdapter implements AgentRuntimePort {
 
   async *run(req: AgentRunRequest): AsyncIterable<AgentEvent> {
     const uid = () => crypto.randomUUID();
+    try {
+      validateRuntimeForProvider(req.provider, this.kind);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      yield {
+        id: uid(),
+        ts: Date.now(),
+        t: "agent.status",
+        agentId: req.role.id,
+        runId: req.runId,
+        ticketId: req.ticket.id,
+        status: "error",
+        detail: msg,
+        targetZone: req.role.zone,
+      };
+      throw err;
+    }
+
     yield {
       id: uid(),
       ts: Date.now(),
@@ -161,7 +180,7 @@ export class ClaudeAgentSdkRuntimeAdapter implements AgentRuntimePort {
           agentId: req.role.id,
           runId: req.runId,
           ticketId: req.ticket.id,
-          provider: "claude",
+          provider: req.provider,
           inTok: msg.inTok ?? 0,
           outTok: msg.outTok ?? 0,
           costUsd: msg.total_cost_usd ?? 0,
@@ -196,6 +215,24 @@ export class CodexSdkRuntimeAdapter implements AgentRuntimePort {
 
   async *run(req: AgentRunRequest): AsyncIterable<AgentEvent> {
     const uid = () => crypto.randomUUID();
+    try {
+      validateRuntimeForProvider(req.provider, this.kind);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      yield {
+        id: uid(),
+        ts: Date.now(),
+        t: "agent.status",
+        agentId: req.role.id,
+        runId: req.runId,
+        ticketId: req.ticket.id,
+        status: "error",
+        detail: msg,
+        targetZone: req.role.zone,
+      };
+      throw err;
+    }
+
     yield {
       id: uid(),
       ts: Date.now(),
@@ -272,7 +309,7 @@ export class CodexSdkRuntimeAdapter implements AgentRuntimePort {
           agentId: req.role.id,
           runId: req.runId,
           ticketId: req.ticket.id,
-          provider: "openai_oauth",
+          provider: req.provider,
           inTok,
           outTok,
           costUsd: Number(((inTok * 2 + outTok * 8) / 1_000_000).toFixed(6)),

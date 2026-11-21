@@ -19,19 +19,24 @@ export interface WorkersPanelProps {
   onInspectRole: (roleId: AgentRoleId) => void;
 }
 
-export const WorkersPanel: React.FC<WorkersPanelProps> = ({
+export const WorkersPanel: React.FC<WorkersPanelProps> = React.memo(({
   onHide,
   onInspectRole,
 }) => {
   const roles = useOfficeStore((s) => s.roles);
   const selectedRoleId = useOfficeStore((s) => s.selectedRoleId);
   const totalCostUsd = useOfficeStore((s) => s.snapshot.totalCostUsd);
-  const approvalsCount = useOfficeStore(
-    (s) => Object.keys(s.snapshot.approvals).length
-  );
-  const firstWaitingAgentId = useOfficeStore(
-    (s) => Object.values(s.snapshot.approvals)[0]?.agentId ?? null
-  );
+  const approvalsCount = useOfficeStore((s) => {
+    let count = 0;
+    for (const _ in s.snapshot.approvals) count += 1;
+    return count;
+  });
+  const firstWaitingAgentId = useOfficeStore((s) => {
+    for (const id in s.snapshot.approvals) {
+      return s.snapshot.approvals[id]?.agentId ?? null;
+    }
+    return null;
+  });
   const waitingIdsKey = useOfficeStore((s) => {
     let key = "";
     for (const role of s.roles) {
@@ -88,4 +93,6 @@ export const WorkersPanel: React.FC<WorkersPanelProps> = ({
       </ul>
     </section>
   );
-};
+});
+
+WorkersPanel.displayName = "WorkersPanel";

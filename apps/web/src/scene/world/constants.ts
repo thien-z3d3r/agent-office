@@ -169,7 +169,6 @@ export interface DeskAnchorSet {
   meetingSeatAnchor: THREE.Object3D;
 }
 
-// 8 role desks arranged in 2 back-to-back central pods.
 export const ROLE_DESK_PLACEMENTS: Record<AgentRoleId, DeskPlacement> = {
   em: {
     id: "desk-em",

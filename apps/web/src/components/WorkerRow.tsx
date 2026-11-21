@@ -1,5 +1,4 @@
 import React from "react";
-import { useShallow } from "zustand/react/shallow";
 import type { AgentRoleId, RoleConfig } from "@agent-office/protocol";
 import { useOfficeStore } from "../store/office-store.ts";
 
@@ -12,15 +11,14 @@ export interface WorkerRowProps {
 export const WorkerRow: React.FC<WorkerRowProps> = React.memo(
   ({ role, isSelected, onInspect }) => {
     const activeProvider = useOfficeStore((s) => s.snapshot.activeProvider);
-    const { status, detail, subAgentId } = useOfficeStore(
-      useShallow((s) => {
-        const agent = s.snapshot.agents[role.id];
-        return {
-          status: agent?.status ?? "idle",
-          detail: agent?.detail ?? "Ready at desk",
-          subAgentId: agent?.subAgentId ?? null,
-        };
-      })
+    const status = useOfficeStore(
+      (s) => s.snapshot.agents[role.id]?.status ?? "idle"
+    );
+    const detail = useOfficeStore(
+      (s) => s.snapshot.agents[role.id]?.detail ?? "Ready at desk"
+    );
+    const subAgentId = useOfficeStore(
+      (s) => s.snapshot.agents[role.id]?.subAgentId ?? null
     );
 
     const isWaiting = status === "waiting_approval";

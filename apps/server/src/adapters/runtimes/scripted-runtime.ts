@@ -111,7 +111,7 @@ export class ScriptedRuntimeAdapter implements AgentRuntimePort {
       agentId: req.role.id,
       runId: req.runId,
       ticketId: req.ticket.id,
-      provider: req.providerOverride ?? req.role.provider,
+      provider: req.provider,
       inTok: 250,
       outTok: 95,
       costUsd: 0.0015,

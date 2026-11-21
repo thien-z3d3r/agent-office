@@ -4,13 +4,13 @@ import type {
   AgentRoleId,
   OfficeConfig,
   OfficeStateSnapshot,
-  ProviderId,
   RoleConfig,
   RuntimeKind,
   TaskTableRow,
   Ticket,
   TicketStage,
 } from "@agent-office/protocol";
+import { validateRuntimeForProvider } from "../domain/providers.ts";
 import {
   transitionTicket,
   type TicketTransitionAction,
@@ -94,33 +94,68 @@ export async function runRoleStage(
     roleId: AgentRoleId;
     prompt: string;
     mode: "scripted" | "live";
-    providerOverride?: ProviderId;
-    runtimeOverride?: RuntimeKind;
   }
 ): Promise<Ticket> {
   const snapshot = ctx.getSnapshot();
   const baseRole = ctx.getRole(args.roleId);
-  const activeProvider = args.providerOverride ?? snapshot.activeProvider;
-  const role: RoleConfig = {
-    ...baseRole,
-    provider: activeProvider,
-    runtime: snapshot.activeRuntime,
-  };
+  const activeProvider = snapshot.activeProvider;
+  const activeModel = snapshot.activeModel ?? undefined;
   const runtimeKind: RuntimeKind =
-    args.mode === "scripted"
-      ? "scripted"
-      : args.runtimeOverride ?? snapshot.activeRuntime;
-  const runtime =
-    ctx.runtimes.get(runtimeKind) ?? ctx.runtimes.get("scripted");
-  if (!runtime) {
-    throw new Error(`No runtime registered for kind "${runtimeKind}"`);
+    args.mode === "scripted" ? "scripted" : snapshot.activeRuntime;
+
+  const escalatePreRun = (reason: string): Ticket => {
+    ctx.emit({
+      id: crypto.randomUUID(),
+      ts: Date.now(),
+      t: "agent.status",
+      agentId: args.roleId,
+      runId: `run-${args.roleId}-${args.ticket.id}-${Date.now()}`,
+      ticketId: args.ticket.id,
+      status: "error",
+      detail: reason,
+      targetZone: baseRole.zone,
+    });
+    ctx.updateTaskRow(args.ticket.id, args.roleId, "failed", reason);
+    return commitTransition(
+      ctx,
+      args.ticket,
+      { type: "AGENT_ERROR", reason },
+      ctx.getWorkflowLimits()
+    );
+  };
+
+  if (args.mode === "live") {
+    if (runtimeKind === "scripted") {
+      return escalatePreRun(
+        `Cannot run live ticket for "${activeProvider}" while activeRuntime is "scripted". Select "jcode" or "ai-sdk" in Providers & OAuth Settings.`
+      );
+    }
+    try {
+      validateRuntimeForProvider(activeProvider, runtimeKind);
+    } catch (err) {
+      return escalatePreRun(err instanceof Error ? err.message : String(err));
+    }
   }
+
+  const runtime = ctx.runtimes.get(runtimeKind);
+  if (!runtime) {
+    return escalatePreRun(
+      `Runtime "${runtimeKind}" is not registered for active provider "${activeProvider}".`
+    );
+  }
+
+  const existingRow = Object.values(snapshot.taskTable).find(
+    (r) => r.ticketId === args.ticket.id && r.role === args.roleId
+  );
+  const subAgentLabel = existingRow
+    ? `sub-${activeProvider}-${args.roleId}-${existingRow.order}`
+    : `sub-${activeProvider}-${args.roleId}`;
 
   ctx.updateTaskRow(
     args.ticket.id,
     args.roleId,
     "running",
-    `Spawned sub-agent on ${activeProvider}`
+    `Spawned ${subAgentLabel} on ${activeProvider}`
   );
 
   const { worktreePath, branch } = await ctx.workspace.ensureWorktree(
@@ -170,8 +205,10 @@ export async function runRoleStage(
     for await (const ev of runtime.run({
       runId,
       ticket: currentTicket,
-      role,
-      providerOverride: activeProvider,
+      role: baseRole,
+      provider: activeProvider,
+      runtime: runtimeKind,
+      model: activeModel,
       prompt: args.prompt,
       worktreePath,
       signal: controller.signal,
@@ -279,10 +316,12 @@ export async function runRoleStage(
       currentTicket.id,
       args.roleId,
       currentTicket.stage === "Escalated" ? "failed" : "done",
-      `Completed by sub-${activeProvider}-${args.roleId}`
+      `Completed by ${subAgentLabel}`
     );
   } catch (err) {
     flushPendingText();
+    const rawMsg = err instanceof Error ? err.message : String(err);
+    const reason = `Active provider "${activeProvider}" (${runtimeKind}) failed on ${args.roleId}: ${rawMsg}. Check credentials or jcode OAuth in Providers & OAuth Settings.`;
     ctx.store.saveStageRun({
       runId,
       ticketId: currentTicket.id,
@@ -292,25 +331,24 @@ export async function runRoleStage(
       startedAt,
       endedAt: Date.now(),
     });
-    ctx.updateTaskRow(
-      currentTicket.id,
-      args.roleId,
-      "failed",
-      err instanceof Error ? err.message : String(err)
-    );
-    if (args.mode === "live" && !args.providerOverride) {
-      return runRoleStage(ctx, {
-        ...args,
-        providerOverride: baseRole.fallback.provider,
-        runtimeOverride: baseRole.fallback.runtime,
-      });
-    }
+    ctx.emit({
+      id: crypto.randomUUID(),
+      ts: Date.now(),
+      t: "agent.status",
+      agentId: args.roleId,
+      runId,
+      ticketId: currentTicket.id,
+      status: "error",
+      detail: reason,
+      targetZone: baseRole.zone,
+    });
+    ctx.updateTaskRow(currentTicket.id, args.roleId, "failed", reason);
     currentTicket = commitTransition(
       ctx,
       currentTicket,
       {
         type: "AGENT_ERROR",
-        reason: err instanceof Error ? err.message : String(err),
+        reason,
       },
       ctx.getWorkflowLimits()
     );
@@ -427,10 +465,6 @@ export async function driveTicket(
       const diff = ticket.worktreePath
         ? await ctx.workspace.getDiff(ticket.worktreePath)
         : "";
-      ticket = {
-        ...ticket,
-        authorProvider: ctx.getSnapshot().activeProvider,
-      };
       ticket = commitTransition(
         ctx,
         ticket,
@@ -448,7 +482,7 @@ export async function driveTicket(
         "reviewer",
         ticket.id,
         "Review",
-        `Branch ${ticket.branch} ready for cross-vendor review`
+        `Branch ${ticket.branch} ready for review`
       );
     } else if (ticket.stage === "Review") {
       ticket = await runRoleStage(ctx, {

@@ -172,6 +172,7 @@ select optgroup {
 #app {
   position: fixed;
   inset: 0;
+  color: var(--ink);
 }
 
 #app[data-theme="night"] {
@@ -219,7 +220,7 @@ select optgroup {
     "bottom";
 }
 
-#hud > * {
+:where(#hud > *) {
   pointer-events: none;
 }
 
@@ -756,6 +757,12 @@ select optgroup {
   transition: width 0.25s ease;
 }
 
+.spend-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .bottom-bar {
   grid-area: bottom;
   align-self: end;
@@ -894,6 +901,7 @@ select optgroup {
 
 .modal {
   background: var(--paper);
+  color: var(--ink);
   border: 3px solid var(--ink);
   border-radius: 20px;
   box-shadow: 0 6px 0 var(--ink);
@@ -1112,6 +1120,89 @@ select optgroup {
   flex: 1 1 200px;
 }
 
+.model-override-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: stretch;
+}
+
+.model-override-row .input-control {
+  flex: 1 1 200px;
+}
+
+.active-provider-card {
+  padding: 14px;
+  background: var(--paper-2);
+  border: 3px solid var(--ink);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.active-provider-card.needs-setup {
+  background: var(--bad-soft);
+  border-color: var(--bad);
+}
+
+.active-provider-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.active-provider-title-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.active-provider-header h3 {
+  margin: 0;
+  font-size: 0.9375rem;
+  font-weight: 900;
+}
+
+.other-providers-details {
+  border: 2px solid var(--ink);
+  border-radius: 12px;
+  background: var(--paper);
+}
+
+.other-providers-summary {
+  min-height: 44px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.875rem;
+  font-weight: 800;
+  color: var(--ink);
+  background: var(--paper-2);
+  border-radius: 10px;
+}
+
+.other-providers-summary:hover {
+  background: var(--surface-input);
+}
+
+.other-providers-details[open] .other-providers-summary {
+  border-bottom: 2px solid var(--ink);
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.other-providers-body {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
 @media (max-width: 800px), (max-height: 540px) {
   #hud,
   #hud.no-side {
@@ -1124,7 +1215,7 @@ select optgroup {
     overflow-x: hidden;
     overscroll-behavior: contain;
   }
-  #hud > * {
+  :where(#hud > *) {
     flex: 0 0 auto;
   }
   .topbar {
@@ -1157,6 +1248,10 @@ select optgroup {
     white-space: normal;
     text-align: center;
   }
+  .spend-controls .btn {
+    white-space: normal;
+    text-align: center;
+  }
   .dock-provider {
     flex-wrap: wrap;
   }
@@ -1183,7 +1278,8 @@ select optgroup {
   .field-grid-2 {
     grid-template-columns: 1fr;
   }
-  .secret-input-row {
+  .secret-input-row,
+  .active-provider-header {
     flex-wrap: wrap;
   }
   .backdrop {

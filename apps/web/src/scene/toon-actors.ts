@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import type {
   AgentLiveState,
   AgentRoleId,
@@ -6,16 +7,20 @@ import type {
   RoleConfig,
 } from "@agent-office/protocol";
 import {
-  cardSprite,
+  CARD_RES,
   disposeSprite,
-  mesh,
-  noOutline,
+  gradientMap,
+  mergeColoredParts,
+  paintCardCanvas,
+  paintTextCanvas,
   roundedBox,
+  TEXT_SCALE,
   textSprite,
   toon,
   toonUnique,
 } from "./toon.ts";
 import { getPreloadedModel } from "./models.ts";
+import type { DeskAnchorSet } from "./world/constants.ts";
 
 type WorkerAct =
   | "rest"
@@ -175,78 +180,88 @@ function blendStance(
   return out;
 }
 
-function buildPapers(): { group: THREE.Group; page: THREE.Group } {
-  const group = new THREE.Group();
+function buildPapersGeometries(): {
+  stackGeo: THREE.BufferGeometry;
+  pageGeo: THREE.BufferGeometry;
+} {
   const W = 0.34;
   const H = 0.44;
-  const paper = toon("#fffaf3");
-  const ink = toon("#8d99ae");
-  ["#f1ece2", "#f7f3ea", "#fffaf3"].forEach((c, i) => {
-    const sheet = mesh(
-      new THREE.BoxGeometry(W, H, 0.008),
-      toon(c),
-      (i - 1) * 0.012,
-      -H / 2 - i * 0.006,
-      0.02 - i * 0.012,
-      false
-    );
-    sheet.rotation.z = (i - 1) * 0.04;
-    group.add(sheet);
+  const dummy = new THREE.Object3D();
+  const stackParts: Array<{
+    geo: THREE.BufferGeometry;
+    color: string;
+    matrix: THREE.Matrix4;
+  }> = [];
+  const tempGeos: THREE.BufferGeometry[] = [];
+
+  (["#f1ece2", "#f7f3ea", "#fffaf3"] as const).forEach((c, i) => {
+    const geo = new THREE.BoxGeometry(W, H, 0.008);
+    tempGeos.push(geo);
+    dummy.position.set((i - 1) * 0.012, -H / 2 - i * 0.006, 0.02 - i * 0.012);
+    dummy.rotation.set(0, 0, (i - 1) * 0.04);
+    dummy.scale.set(1, 1, 1);
+    dummy.updateMatrix();
+    stackParts.push({ geo, color: c, matrix: dummy.matrix.clone() });
   });
-  const addLines = (on: THREE.Object3D, z: number) => {
+
+  const addLineParts = (
+    target: typeof stackParts,
+    z: number
+  ) => {
     for (let i = 0; i < 6; i++) {
       const short = i % 3 === 2;
-      on.add(
-        mesh(
-          new THREE.BoxGeometry(W * (short ? 0.45 : 0.72), 0.018, 0.004),
-          ink,
-          short ? -W * 0.135 : 0,
-          -0.07 - i * 0.055,
-          z,
-          false
-        )
-      );
+      const geo = new THREE.BoxGeometry(W * (short ? 0.45 : 0.72), 0.018, 0.004);
+      tempGeos.push(geo);
+      dummy.position.set(short ? -W * 0.135 : 0, -0.07 - i * 0.055, z);
+      dummy.rotation.set(0, 0, 0);
+      dummy.scale.set(1, 1, 1);
+      dummy.updateMatrix();
+      target.push({ geo, color: "#8d99ae", matrix: dummy.matrix.clone() });
     }
   };
-  addLines(group, -0.01);
-  const page = new THREE.Group();
-  page.add(
-    mesh(
-      new THREE.BoxGeometry(W, H, 0.008),
-      paper,
-      0,
-      -H / 2,
-      -0.016,
-      false
-    )
-  );
-  addLines(page, -0.022);
-  group.add(page);
-  group.add(
-    mesh(
-      new THREE.BoxGeometry(W * 0.5, 0.05, 0.05),
-      toon("#adb5bd"),
-      0,
-      0,
-      0,
-      false
-    )
-  );
-  return { group, page };
+  addLineParts(stackParts, -0.01);
+
+  const spineGeo = new THREE.BoxGeometry(W * 0.5, 0.05, 0.05);
+  tempGeos.push(spineGeo);
+  dummy.position.set(0, 0, 0);
+  dummy.rotation.set(0, 0, 0);
+  dummy.scale.set(1, 1, 1);
+  dummy.updateMatrix();
+  stackParts.push({ geo: spineGeo, color: "#adb5bd", matrix: dummy.matrix.clone() });
+
+  const pageParts: typeof stackParts = [];
+  const pageSheetGeo = new THREE.BoxGeometry(W, H, 0.008);
+  tempGeos.push(pageSheetGeo);
+  dummy.position.set(0, -H / 2, -0.016);
+  dummy.rotation.set(0, 0, 0);
+  dummy.scale.set(1, 1, 1);
+  dummy.updateMatrix();
+  pageParts.push({ geo: pageSheetGeo, color: "#fffaf3", matrix: dummy.matrix.clone() });
+  addLineParts(pageParts, -0.022);
+
+  const stackGeo = mergeColoredParts(stackParts);
+  const pageGeo = mergeColoredParts(pageParts);
+  for (const g of tempGeos) g.dispose();
+  return { stackGeo, pageGeo };
 }
 
-function buildGlobe(): {
-  group: THREE.Group;
-  ball: THREE.Group;
-  ring: THREE.Mesh;
+function buildGlobeGeometries(): {
+  ballGeo: THREE.BufferGeometry;
+  ringGeo: THREE.BufferGeometry;
 } {
-  const group = new THREE.Group();
-  const ball = new THREE.Group();
   const r = 0.26;
-  ball.add(
-    mesh(new THREE.SphereGeometry(r, 20, 14), toon("#4cc9f0"), 0, 0, 0, false)
-  );
-  const land = toon("#6fcf6a");
+  const dummy = new THREE.Object3D();
+  const tempGeos: THREE.BufferGeometry[] = [];
+  const parts: Array<{
+    geo: THREE.BufferGeometry;
+    color: string;
+    matrix?: THREE.Matrix4;
+  }> = [];
+
+  const oceanGeo = new THREE.SphereGeometry(r, 20, 14);
+  tempGeos.push(oceanGeo);
+  parts.push({ geo: oceanGeo, color: "#4cc9f0" });
+
   for (const [lat, lon, size] of [
     [0.5, 0.2, 0.5],
     [0.1, 0.9, 0.4],
@@ -256,116 +271,239 @@ function buildGlobe(): {
     [0.6, 4.4, 0.45],
     [-0.5, 5.2, 0.35],
   ] as const) {
-    const blob = mesh(
-      new THREE.SphereGeometry(size * r, 10, 8),
-      land,
+    const blobGeo = new THREE.SphereGeometry(size * r, 10, 8);
+    tempGeos.push(blobGeo);
+    dummy.position.set(
       Math.cos(lat) * Math.sin(lon) * r * 0.86,
       Math.sin(lat) * r * 0.86,
-      Math.cos(lat) * Math.cos(lon) * r * 0.86,
-      false
+      Math.cos(lat) * Math.cos(lon) * r * 0.86
     );
-    blob.scale.set(1.2, 0.8, 1.2);
-    ball.add(blob);
+    dummy.rotation.set(0, 0, 0);
+    dummy.scale.set(1.2, 0.8, 1.2);
+    dummy.updateMatrix();
+    parts.push({ geo: blobGeo, color: "#6fcf6a", matrix: dummy.matrix.clone() });
   }
-  ball.rotation.z = 0.41;
-  group.add(ball);
-  const ring = mesh(
-    new THREE.TorusGeometry(r * 1.35, 0.016, 6, 32),
-    toon("#ffd166", { emissive: "#7a5b00" }),
-    0,
-    0,
-    0,
-    false
-  );
-  ring.rotation.x = Math.PI / 2 - 0.2;
-  group.add(ring);
-  return { group, ball, ring };
+
+  const ballGeo = mergeColoredParts(parts);
+  for (const g of tempGeos) g.dispose();
+  const ringGeo = new THREE.TorusGeometry(r * 1.35, 0.016, 6, 32);
+  return { ballGeo, ringGeo };
 }
 
-export class ToonLaptop {
+interface LaptopSlot {
+  roleId: AgentRoleId;
+  anchorObj: THREE.Object3D;
+  openT: number;
+  lastStructKey: string;
+  lastStreamKey: string;
+  lastPaintMs: number;
+}
+
+export class ToonLaptopPool {
   readonly root = new THREE.Group();
-  private readonly canvas = document.createElement("canvas");
-  private readonly ctx: CanvasRenderingContext2D;
-  private readonly texture: THREE.CanvasTexture;
-  private readonly lid = new THREE.Group();
-  private openT = 0;
-  private lastKey = "";
+  private readonly slots = new Map<AgentRoleId, LaptopSlot>();
+  private readonly orderedSlots: LaptopSlot[] = [];
+  private readonly cols = 4;
+  private readonly rows: number;
+  private readonly cellW = 640;
+  private readonly cellH = 420;
+  private readonly atlasCanvas = document.createElement("canvas");
+  private readonly atlasCtx: CanvasRenderingContext2D;
+  private readonly atlasTex: THREE.CanvasTexture;
+  private atlasDirty = false;
 
-  constructor(stickerColor = "#ff8a5b") {
-    this.canvas.width = 640;
-    this.canvas.height = 420;
-    this.ctx = this.canvas.getContext("2d")!;
-    this.texture = new THREE.CanvasTexture(this.canvas);
-    this.texture.colorSpace = THREE.SRGBColorSpace;
-    this.texture.anisotropy = 4;
+  private readonly baseGeo: THREE.BufferGeometry;
+  private readonly lidShellGeo: THREE.BufferGeometry;
+  private readonly stickerGeo: THREE.BufferGeometry;
+  private readonly screenGeo: THREE.BufferGeometry;
+  private readonly baseMat: THREE.MeshToonMaterial;
+  private readonly lidMat: THREE.MeshToonMaterial;
+  private readonly stickerMat: THREE.MeshToonMaterial;
+  private readonly screenMat: THREE.MeshBasicMaterial;
+  private readonly baseMesh: THREE.InstancedMesh;
+  private readonly lidShellMesh: THREE.InstancedMesh;
+  private readonly stickerMesh: THREE.InstancedMesh;
+  private readonly screenMesh: THREE.InstancedMesh;
 
-    this.lid.position.set(0, 0.035, -0.24);
-    this.root.add(this.lid);
-    const screen = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.72, 0.46),
-      new THREE.MeshBasicMaterial({ map: this.texture, toneMapped: false })
+  private readonly dummy = new THREE.Object3D();
+  private readonly lidMat4 = new THREE.Matrix4();
+
+  constructor(
+    roles: RoleConfig[],
+    desks: Map<AgentRoleId, DeskAnchorSet>
+  ) {
+    const n = Math.max(1, roles.length);
+    this.rows = Math.max(2, Math.ceil(n / this.cols));
+    this.atlasCanvas.width = this.cols * this.cellW;
+    this.atlasCanvas.height = this.rows * this.cellH;
+    this.atlasCtx = this.atlasCanvas.getContext("2d")!;
+    this.atlasTex = new THREE.CanvasTexture(this.atlasCanvas);
+    this.atlasTex.colorSpace = THREE.SRGBColorSpace;
+    this.atlasTex.anisotropy = 4;
+
+    const baseShellGeo = roundedBox(0.78, 0.035, 0.52, 0.04);
+    const kbGeo = new THREE.BoxGeometry(0.66, 0.006, 0.24);
+    const tpGeo = new THREE.BoxGeometry(0.2, 0.004, 0.11);
+    const m = new THREE.Matrix4();
+    this.baseGeo = mergeColoredParts([
+      { geo: baseShellGeo, color: "#c9ced6", matrix: m.clone().makeTranslation(0, 0.018, 0.02) },
+      { geo: kbGeo, color: "#2b2d42", matrix: m.clone().makeTranslation(0, 0.037, 0) },
+      { geo: tpGeo, color: "#aab1bb", matrix: m.clone().makeTranslation(0, 0.037, 0.19) },
+    ]);
+    kbGeo.dispose();
+    tpGeo.dispose();
+
+    const rawLid = roundedBox(0.78, 0.025, 0.5, 0.04);
+    this.lidShellGeo = rawLid.index ? rawLid.toNonIndexed() : rawLid.clone();
+    this.lidShellGeo.rotateX(Math.PI / 2);
+    this.lidShellGeo.translate(0, 0.25, 0);
+
+    this.stickerGeo = new THREE.CircleGeometry(0.07, 20);
+    this.stickerGeo.rotateY(Math.PI);
+    this.stickerGeo.translate(0, 0.27, -0.014);
+
+    this.screenGeo = new THREE.PlaneGeometry(0.72, 0.46);
+    this.screenGeo.translate(0, 0.25, 0.014);
+
+    const rectAttr = new Float32Array(n * 4);
+    const padU = 0.5 / this.atlasCanvas.width;
+    const padV = 0.5 / this.atlasCanvas.height;
+    for (let i = 0; i < n; i++) {
+      const col = i % this.cols;
+      const row = Math.floor(i / this.cols);
+      rectAttr[i * 4] = col / this.cols + padU;
+      rectAttr[i * 4 + 1] = (this.rows - 1 - row) / this.rows + padV;
+      rectAttr[i * 4 + 2] = 1 / this.cols - 2 * padU;
+      rectAttr[i * 4 + 3] = 1 / this.rows - 2 * padV;
+    }
+    this.screenGeo.setAttribute(
+      "aAtlasRect",
+      new THREE.InstancedBufferAttribute(rectAttr, 4)
     );
-    screen.position.set(0, 0.25, 0.014);
-    this.lid.add(noOutline(screen));
 
-    const shell = toon("#c9ced6");
-    const dark = toon("#2b2d42");
+    this.baseMat = new THREE.MeshToonMaterial({
+      color: "#ffffff",
+      vertexColors: true,
+      gradientMap: gradientMap(),
+    });
+    this.lidMat = toon("#c9ced6");
+    this.stickerMat = toonUnique("#ffffff", { outline: false });
+    this.screenMat = new THREE.MeshBasicMaterial({
+      map: this.atlasTex,
+      toneMapped: false,
+    });
+    this.screenMat.userData.outlineParameters = { visible: false };
+    this.screenMat.onBeforeCompile = (shader) => {
+      shader.vertexShader = shader.vertexShader
+        .replace(
+          "#include <uv_pars_vertex>",
+          "#include <uv_pars_vertex>\nattribute vec4 aAtlasRect;"
+        )
+        .replace(
+          "#include <uv_vertex>",
+          "#include <uv_vertex>\n#ifdef USE_MAP\n\tvMapUv = aAtlasRect.xy + vMapUv * aAtlasRect.zw;\n#endif"
+        );
+    };
+    this.screenMat.customProgramCacheKey = () => "laptop-screen-atlas";
+
+    this.baseMesh = new THREE.InstancedMesh(this.baseGeo, this.baseMat, n);
+    this.baseMesh.castShadow = true;
+    this.baseMesh.receiveShadow = true;
+    this.baseMesh.frustumCulled = false;
+
+    this.lidShellMesh = new THREE.InstancedMesh(this.lidShellGeo, this.lidMat, n);
+    this.lidShellMesh.castShadow = true;
+    this.lidShellMesh.receiveShadow = true;
+    this.lidShellMesh.frustumCulled = false;
+
+    this.stickerMesh = new THREE.InstancedMesh(this.stickerGeo, this.stickerMat, n);
+    this.stickerMesh.castShadow = false;
+    this.stickerMesh.receiveShadow = false;
+    this.stickerMesh.frustumCulled = false;
+
+    this.screenMesh = new THREE.InstancedMesh(this.screenGeo, this.screenMat, n);
+    this.screenMesh.castShadow = false;
+    this.screenMesh.receiveShadow = false;
+    this.screenMesh.frustumCulled = false;
+
+    const tmpColor = new THREE.Color();
+    for (let i = 0; i < roles.length; i++) {
+      const role = roles[i]!;
+      const desk = desks.get(role.id);
+      if (!desk) continue;
+      desk.laptopAnchor.updateWorldMatrix(true, false);
+
+      this.baseMesh.setMatrixAt(i, desk.laptopAnchor.matrixWorld);
+      this.stickerMesh.setColorAt(i, tmpColor.set(role.tint));
+
+      const slot: LaptopSlot = {
+        roleId: role.id,
+        anchorObj: desk.laptopAnchor,
+        openT: 0,
+        lastStructKey: "",
+        lastStreamKey: "",
+        lastPaintMs: 0,
+      };
+      this.slots.set(role.id, slot);
+      this.orderedSlots.push(slot);
+      this.applyLidTransform(i, slot);
+      this.paintCell(i, slot, "IDLE", "Ready at desk", "", 0);
+    }
+
+    this.baseMesh.count = this.orderedSlots.length;
+    this.lidShellMesh.count = this.orderedSlots.length;
+    this.stickerMesh.count = this.orderedSlots.length;
+    this.screenMesh.count = this.orderedSlots.length;
+    this.baseMesh.instanceMatrix.needsUpdate = true;
+    this.lidShellMesh.instanceMatrix.needsUpdate = true;
+    this.stickerMesh.instanceMatrix.needsUpdate = true;
+    this.screenMesh.instanceMatrix.needsUpdate = true;
+    if (this.stickerMesh.instanceColor) {
+      this.stickerMesh.instanceColor.needsUpdate = true;
+    }
+
     this.root.add(
-      mesh(roundedBox(0.78, 0.035, 0.52, 0.04), shell, 0, 0.018, 0.02)
+      this.baseMesh,
+      this.lidShellMesh,
+      this.stickerMesh,
+      this.screenMesh
     );
-    this.root.add(
-      mesh(
-        new THREE.BoxGeometry(0.66, 0.006, 0.24),
-        dark,
-        0,
-        0.037,
-        0.0,
-        false
-      )
-    );
-    this.root.add(
-      mesh(
-        new THREE.BoxGeometry(0.2, 0.004, 0.11),
-        toon("#aab1bb"),
-        0,
-        0.037,
-        0.19,
-        false
-      )
-    );
-    const lidShell = mesh(
-      roundedBox(0.78, 0.025, 0.5, 0.04),
-      shell,
-      0,
-      0.25,
-      0
-    );
-    lidShell.rotation.x = Math.PI / 2;
-    this.lid.add(lidShell);
-
-    const sticker = mesh(
-      new THREE.CircleGeometry(0.07, 20),
-      toon(stickerColor),
-      0,
-      0.27,
-      -0.014,
-      false
-    );
-    sticker.rotation.y = Math.PI;
-    this.lid.add(sticker);
-
-    this.lid.rotation.x = Math.PI / 2;
-    this.paintScreen("IDLE", "Ready at desk", "");
   }
 
-  private paintScreen(status: string, detail: string, streamTail: string) {
-    const key = `${status}|${detail}|${streamTail.slice(-160)}`;
-    if (key === this.lastKey) return;
-    this.lastKey = key;
+  private applyLidTransform(idx: number, slot: LaptopSlot): void {
+    const e = 1 - Math.pow(1 - slot.openT, 3);
+    this.dummy.position.set(0, 0.035, -0.24);
+    this.dummy.rotation.set(Math.PI / 2 - e * (Math.PI / 2 + 0.22), 0, 0);
+    this.dummy.scale.set(1, 1, 1);
+    this.dummy.updateMatrix();
+    this.lidMat4.multiplyMatrices(slot.anchorObj.matrixWorld, this.dummy.matrix);
+    this.lidShellMesh.setMatrixAt(idx, this.lidMat4);
+    this.stickerMesh.setMatrixAt(idx, this.lidMat4);
+    this.screenMesh.setMatrixAt(idx, this.lidMat4);
+  }
 
-    const ctx = this.ctx;
+  private paintCell(
+    idx: number,
+    slot: LaptopSlot,
+    status: string,
+    detail: string,
+    streamTail: string,
+    nowMs: number
+  ): void {
+    const col = idx % this.cols;
+    const row = Math.floor(idx / this.cols);
+    const ox = col * this.cellW;
+    const oy = row * this.cellH;
+    const ctx = this.atlasCtx;
+
+    ctx.save();
+    ctx.translate(ox, oy);
+    ctx.beginPath();
+    ctx.rect(0, 0, this.cellW, this.cellH);
+    ctx.clip();
+
     ctx.fillStyle = "#1b1d2e";
-    ctx.fillRect(0, 0, 640, 420);
+    ctx.fillRect(0, 0, this.cellW, this.cellH);
     ctx.fillStyle = "#06d6a0";
     ctx.font = "700 24px ui-monospace, Menlo, Consolas, monospace";
     ctx.fillText(`$ agent-office [${status.toUpperCase()}]`, 24, 44);
@@ -378,22 +516,75 @@ export class ToonLaptop {
     const lines = (streamTail || "// Waiting for task dispatch...")
       .split("\n")
       .slice(-10);
-    lines.forEach((l, idx) => {
-      ctx.fillText(l.slice(0, 52), 24, 126 + idx * 26);
+    lines.forEach((l, lineIdx) => {
+      ctx.fillText(l.slice(0, 52), 24, 126 + lineIdx * 26);
     });
-    this.texture.needsUpdate = true;
+    ctx.restore();
+
+    slot.lastStructKey = `${status}|${detail}`;
+    slot.lastStreamKey = streamTail.slice(-160);
+    slot.lastPaintMs = nowMs;
+    this.atlasDirty = true;
   }
 
-  update(dt: number, live: AgentLiveState, reducedMotion: boolean): boolean {
+  updateLaptop(
+    roleId: AgentRoleId,
+    dt: number,
+    live: AgentLiveState,
+    reducedMotion: boolean,
+    nowMs: number
+  ): boolean {
+    const slot = this.slots.get(roleId);
+    if (!slot) return false;
+    const idx = this.orderedSlots.indexOf(slot);
+    if (idx < 0) return false;
+
     let lidMoved = false;
-    if (this.openT < 1) {
-      this.openT = reducedMotion ? 1 : Math.min(1, this.openT + dt * 1.8);
-      const e = 1 - Math.pow(1 - this.openT, 3);
-      this.lid.rotation.x = Math.PI / 2 - e * (Math.PI / 2 + 0.22);
+    if (slot.openT < 1) {
+      slot.openT = reducedMotion ? 1 : Math.min(1, slot.openT + dt * 1.8);
+      this.applyLidTransform(idx, slot);
+      this.lidShellMesh.instanceMatrix.needsUpdate = true;
+      this.stickerMesh.instanceMatrix.needsUpdate = true;
+      this.screenMesh.instanceMatrix.needsUpdate = true;
       lidMoved = true;
     }
-    this.paintScreen(live.status, live.detail, live.streamBuffer);
-    return lidMoved;
+
+    const structKey = `${live.status}|${live.detail}`;
+    const streamKey = live.streamBuffer.slice(-160);
+    const structChanged = structKey !== slot.lastStructKey;
+    const streamChanged = streamKey !== slot.lastStreamKey;
+
+    if (
+      structChanged ||
+      (streamChanged && (nowMs - slot.lastPaintMs >= 140 || live.status === "done"))
+    ) {
+      this.paintCell(idx, slot, live.status, live.detail, live.streamBuffer, nowMs);
+      return lidMoved;
+    }
+
+    return lidMoved || streamChanged;
+  }
+
+  commit(): void {
+    if (this.atlasDirty) {
+      this.atlasTex.needsUpdate = true;
+      this.atlasDirty = false;
+    }
+  }
+
+  dispose(): void {
+    this.baseMesh.dispose();
+    this.lidShellMesh.dispose();
+    this.stickerMesh.dispose();
+    this.screenMesh.dispose();
+    this.baseGeo.dispose();
+    this.lidShellGeo.dispose();
+    this.stickerGeo.dispose();
+    this.screenGeo.dispose();
+    this.baseMat.dispose();
+    this.stickerMat.dispose();
+    this.screenMat.dispose();
+    this.atlasTex.dispose();
   }
 }
 
@@ -450,207 +641,408 @@ function mapStatusToAct(status: AgentStatus): WorkerAct {
   }
 }
 
-export class ToonWorker {
+interface CardSpriteHandle {
+  sprite: THREE.Sprite;
+  canvas: HTMLCanvasElement;
+  tex: THREE.CanvasTexture;
+  structuralKey: string;
+  detailKey: string;
+  lastPaintMs: number;
+}
+
+interface WorkerSlot {
+  index: number;
+  role: RoleConfig;
+  pos: THREE.Vector3;
+  rotY: number;
+  spriteAnchor: THREE.Group;
+  nameTag: THREE.Sprite;
+  bubbleHandle: CardSpriteHandle | null;
+  lastBulbStatus: AgentStatus | null;
+  prevStatus: AgentStatus | null;
+  doneElapsed: number;
+  acts: Map<WorkerAct, number>;
+  stance: Stance;
+  scratch: Stance;
+  t: number;
+  blinkAt: number;
+  flipT: number;
+  globeBallRotY: number;
+  globeRingRotZ: number;
+  showPapers: boolean;
+  showGlobe: boolean;
+  bodyMatrix: THREE.Matrix4;
+  rootMatrix: THREE.Matrix4;
+}
+
+export class ToonWorkerPool {
   readonly root = new THREE.Group();
-  readonly role: RoleConfig;
-  private readonly body = new THREE.Group();
-  private readonly skin: THREE.MeshToonMaterial;
-  private readonly bulb: THREE.MeshToonMaterial;
-  private readonly armL: THREE.Object3D;
-  private readonly armR: THREE.Object3D;
-  private readonly eyes: THREE.Mesh[] = [];
-  private readonly pupils: THREE.Mesh[] = [];
-  private readonly feet: THREE.Mesh[] = [];
-  private readonly papers: { group: THREE.Group; page: THREE.Group };
-  private readonly globe: {
-    group: THREE.Group;
-    ball: THREE.Group;
-    ring: THREE.Mesh;
-  };
-  private nameTag: THREE.Sprite | null = null;
-  private bubble: THREE.Sprite | null = null;
-  private bubbleKey = "";
-  private lastBulbStatus: AgentStatus | null = null;
-  private prevStatus: AgentStatus | null = null;
-  private doneElapsed = 0;
-  private readonly acts = new Map<WorkerAct, number>();
-  private readonly stance: Stance = {
-    armLx: 0,
-    armRx: 0,
-    armLz: 0,
-    armRz: 0,
-    reach: 0,
-    drop: 0,
-    lean: 0,
-    turn: 0,
-    roll: 0,
-    lift: 0,
-    tap: 0,
-    kick: 0,
-    lid: 1,
-    look: 0,
-  };
-  private readonly scratch: Stance = { ...this.stance };
-  private t = Math.random() * 5;
-  private blinkAt = 2 + Math.random() * 3;
-  private flipT = 0;
+  private readonly slots = new Map<AgentRoleId, WorkerSlot>();
+  private readonly orderedSlots: WorkerSlot[] = [];
 
-  constructor(role: RoleConfig) {
-    this.role = role;
-    this.skin = toonUnique(role.tint);
-    const white = toon("#ffffff");
-    const ink = toon("#1d1d1d");
+  private readonly beanGeo: THREE.BufferGeometry;
+  private readonly headsetGeo: THREE.BufferGeometry;
+  private readonly bulbGeo: THREE.BufferGeometry;
+  private readonly armGeo: THREE.BufferGeometry;
+  private readonly footGeo: THREE.BufferGeometry;
+  private readonly eyeGeo: THREE.BufferGeometry;
+  private readonly pupilGeo: THREE.BufferGeometry;
+  private readonly papersStackGeo: THREE.BufferGeometry;
+  private readonly papersPageGeo: THREE.BufferGeometry;
+  private readonly globeBallGeo: THREE.BufferGeometry;
+  private readonly globeRingGeo: THREE.BufferGeometry;
 
-    this.root.add(this.body);
-    this.root.userData.roleId = role.id;
-    this.root.scale.setScalar(0.86);
+  private readonly skinMat: THREE.MeshToonMaterial;
+  private readonly bulbMat: THREE.MeshToonMaterial;
+  private readonly vertexColorMat: THREE.MeshToonMaterial;
 
-    const bean = mesh(
-      new THREE.CapsuleGeometry(0.28, 0.3, 8, 16),
-      this.skin,
-      0,
-      0.55,
-      0
-    );
-    this.body.add(bean);
+  private readonly beanMesh: THREE.InstancedMesh;
+  private readonly headsetMesh: THREE.InstancedMesh;
+  private readonly bulbMesh: THREE.InstancedMesh;
+  private readonly armsMesh: THREE.InstancedMesh;
+  private readonly feetMesh: THREE.InstancedMesh;
+  private readonly eyesMesh: THREE.InstancedMesh;
+  private readonly pupilsMesh: THREE.InstancedMesh;
+  private readonly papersStackMesh: THREE.InstancedMesh;
+  private readonly papersPageMesh: THREE.InstancedMesh;
+  private readonly globeBallMesh: THREE.InstancedMesh;
+  private readonly globeRingMesh: THREE.InstancedMesh;
 
-    for (const sx of [-1, 1]) {
-      const eye = mesh(
-        new THREE.SphereGeometry(0.09, 12, 10),
-        white,
-        sx * 0.11,
-        0.7,
-        0.23,
-        false
+  private readonly dummy = new THREE.Object3D();
+  private readonly partMat4 = new THREE.Matrix4();
+  private readonly subMat4 = new THREE.Matrix4();
+  private readonly tmpColor = new THREE.Color();
+  private readonly raySprites: THREE.Sprite[] = [];
+
+  constructor(
+    roles: RoleConfig[],
+    desks: Map<AgentRoleId, DeskAnchorSet>
+  ) {
+    const n = Math.max(1, roles.length);
+
+    this.beanGeo = new THREE.CapsuleGeometry(0.28, 0.3, 8, 16);
+    this.beanGeo.translate(0, 0.55, 0);
+
+    const bandGeo = new THREE.TorusGeometry(0.29, 0.025, 6, 20, Math.PI);
+    const earGeo = new THREE.SphereGeometry(0.07, 10, 8);
+    const antGeo = new THREE.CylinderGeometry(0.015, 0.015, 0.22, 6);
+    const tr = new THREE.Matrix4();
+    this.headsetGeo = mergeColoredParts([
+      { geo: bandGeo, matrix: tr.clone().makeTranslation(0, 0.72, 0) },
+      { geo: earGeo, matrix: tr.clone().makeTranslation(-0.29, 0.72, 0) },
+      { geo: earGeo, matrix: tr.clone().makeTranslation(0.29, 0.72, 0) },
+      { geo: antGeo, matrix: tr.clone().makeTranslation(0, 1.07, 0) },
+    ]);
+    bandGeo.dispose();
+    earGeo.dispose();
+    antGeo.dispose();
+
+    this.bulbGeo = new THREE.SphereGeometry(0.075, 12, 10);
+    this.bulbGeo.translate(0, 1.2, 0);
+
+    this.armGeo = new THREE.CapsuleGeometry(0.055, 0.16, 4, 8);
+    this.armGeo.translate(0, -0.12, 0);
+
+    this.footGeo = new THREE.CapsuleGeometry(0.06, 0.1, 4, 8);
+
+    this.eyeGeo = new THREE.SphereGeometry(0.09, 12, 10);
+    this.eyeGeo.scale(1, 1, 0.6);
+
+    this.pupilGeo = new THREE.SphereGeometry(0.045, 10, 8);
+
+    const papers = buildPapersGeometries();
+    this.papersStackGeo = papers.stackGeo;
+    this.papersPageGeo = papers.pageGeo;
+
+    const globe = buildGlobeGeometries();
+    this.globeBallGeo = globe.ballGeo;
+    this.globeRingGeo = globe.ringGeo;
+
+    this.skinMat = toonUnique("#ffffff");
+    this.bulbMat = toonUnique("#ffffff", { outline: false });
+    this.bulbMat.onBeforeCompile = (shader) => {
+      shader.fragmentShader = shader.fragmentShader.replace(
+        "#include <emissivemap_fragment>",
+        "#include <emissivemap_fragment>\n#ifdef USE_COLOR\n\ttotalEmissiveRadiance += vColor * 0.6;\n#endif"
       );
-      eye.scale.z = 0.6;
-      this.body.add(eye);
-      const pupil = mesh(
-        new THREE.SphereGeometry(0.045, 10, 8),
-        ink,
-        sx * 0.11,
-        0.7,
-        0.29,
-        false
-      );
-      this.body.add(pupil);
-      this.eyes.push(eye, pupil);
-      this.pupils.push(pupil);
-    }
-
-    const band = mesh(
-      new THREE.TorusGeometry(0.29, 0.025, 6, 20, Math.PI),
-      toon("#2b2d42"),
-      0,
-      0.72,
-      0,
-      false
-    );
-    this.body.add(band);
-    for (const sx of [-1, 1]) {
-      this.body.add(
-        mesh(
-          new THREE.SphereGeometry(0.07, 10, 8),
-          toon("#2b2d42"),
-          sx * 0.29,
-          0.72,
-          0,
-          false
-        )
-      );
-    }
-
-    this.body.add(
-      mesh(
-        new THREE.CylinderGeometry(0.015, 0.015, 0.22, 6),
-        toon("#2b2d42"),
-        0,
-        1.07,
-        0,
-        false
-      )
-    );
-    this.bulb = toonUnique(STATUS_BULB_COLOR.idle);
-    this.bulb.emissive = new THREE.Color(STATUS_BULB_COLOR.idle).multiplyScalar(
-      0.6
-    );
-    this.body.add(
-      mesh(new THREE.SphereGeometry(0.075, 12, 10), this.bulb, 0, 1.2, 0, false)
-    );
-
-    const makeArm = (x: number) => {
-      const pivot = new THREE.Group();
-      pivot.position.set(x, 0.55, 0.05);
-      pivot.add(
-        mesh(
-          new THREE.CapsuleGeometry(0.055, 0.16, 4, 8),
-          this.skin,
-          0,
-          -0.12,
-          0
-        )
-      );
-      this.body.add(pivot);
-      return pivot;
     };
-    this.armL = makeArm(-0.3);
-    this.armR = makeArm(0.3);
+    this.bulbMat.customProgramCacheKey = () => "worker-bulb-emissive";
 
-    for (const sx of [-1, 1]) {
-      const foot = mesh(
-        new THREE.CapsuleGeometry(0.06, 0.1, 4, 8),
-        this.skin,
-        sx * 0.12,
-        0.2,
-        0.05
+    this.vertexColorMat = new THREE.MeshToonMaterial({
+      color: "#ffffff",
+      vertexColors: true,
+      gradientMap: gradientMap(),
+    });
+
+    const headsetMat = toon("#2b2d42");
+    const eyeMat = toon("#ffffff", { outline: false });
+    const pupilMat = toon("#1d1d1d", { outline: false });
+    const ringMat = toon("#ffd166", { emissive: "#7a5b00" });
+
+    this.beanMesh = new THREE.InstancedMesh(this.beanGeo, this.skinMat, n);
+    this.beanMesh.castShadow = true;
+    this.beanMesh.receiveShadow = true;
+    this.beanMesh.frustumCulled = false;
+
+    this.headsetMesh = new THREE.InstancedMesh(this.headsetGeo, headsetMat, n);
+    this.headsetMesh.castShadow = false;
+    this.headsetMesh.receiveShadow = true;
+    this.headsetMesh.frustumCulled = false;
+
+    this.bulbMesh = new THREE.InstancedMesh(this.bulbGeo, this.bulbMat, n);
+    this.bulbMesh.castShadow = false;
+    this.bulbMesh.receiveShadow = false;
+    this.bulbMesh.frustumCulled = false;
+
+    this.armsMesh = new THREE.InstancedMesh(this.armGeo, this.skinMat, n * 2);
+    this.armsMesh.castShadow = true;
+    this.armsMesh.receiveShadow = true;
+    this.armsMesh.frustumCulled = false;
+
+    this.feetMesh = new THREE.InstancedMesh(this.footGeo, this.skinMat, n * 2);
+    this.feetMesh.castShadow = true;
+    this.feetMesh.receiveShadow = true;
+    this.feetMesh.frustumCulled = false;
+
+    this.eyesMesh = new THREE.InstancedMesh(this.eyeGeo, eyeMat, n * 2);
+    this.eyesMesh.castShadow = false;
+    this.eyesMesh.receiveShadow = false;
+    this.eyesMesh.frustumCulled = false;
+
+    this.pupilsMesh = new THREE.InstancedMesh(this.pupilGeo, pupilMat, n * 2);
+    this.pupilsMesh.castShadow = false;
+    this.pupilsMesh.receiveShadow = false;
+    this.pupilsMesh.frustumCulled = false;
+
+    this.papersStackMesh = new THREE.InstancedMesh(
+      this.papersStackGeo,
+      this.vertexColorMat,
+      n
+    );
+    this.papersStackMesh.castShadow = false;
+    this.papersStackMesh.receiveShadow = true;
+    this.papersStackMesh.frustumCulled = false;
+    this.papersStackMesh.count = 0;
+    this.papersStackMesh.visible = false;
+
+    this.papersPageMesh = new THREE.InstancedMesh(
+      this.papersPageGeo,
+      this.vertexColorMat,
+      n
+    );
+    this.papersPageMesh.castShadow = false;
+    this.papersPageMesh.receiveShadow = true;
+    this.papersPageMesh.frustumCulled = false;
+    this.papersPageMesh.count = 0;
+    this.papersPageMesh.visible = false;
+
+    this.globeBallMesh = new THREE.InstancedMesh(
+      this.globeBallGeo,
+      this.vertexColorMat,
+      n
+    );
+    this.globeBallMesh.castShadow = false;
+    this.globeBallMesh.receiveShadow = false;
+    this.globeBallMesh.frustumCulled = false;
+    this.globeBallMesh.count = 0;
+    this.globeBallMesh.visible = false;
+
+    this.globeRingMesh = new THREE.InstancedMesh(
+      this.globeRingGeo,
+      ringMat,
+      n
+    );
+    this.globeRingMesh.castShadow = false;
+    this.globeRingMesh.receiveShadow = false;
+    this.globeRingMesh.frustumCulled = false;
+    this.globeRingMesh.count = 0;
+    this.globeRingMesh.visible = false;
+
+    const seatWorld = new THREE.Vector3();
+    for (let i = 0; i < roles.length; i++) {
+      const role = roles[i]!;
+      const desk = desks.get(role.id);
+      if (desk) {
+        desk.seatAnchor.getWorldPosition(seatWorld);
+      } else {
+        seatWorld.set(0, 0, 0);
+      }
+      const rotY = desk ? desk.def.rotY + Math.PI : 0;
+
+      this.tmpColor.set(role.tint);
+      this.beanMesh.setColorAt(i, this.tmpColor);
+      this.armsMesh.setColorAt(i * 2, this.tmpColor);
+      this.armsMesh.setColorAt(i * 2 + 1, this.tmpColor);
+      this.feetMesh.setColorAt(i * 2, this.tmpColor);
+      this.feetMesh.setColorAt(i * 2 + 1, this.tmpColor);
+      this.bulbMesh.setColorAt(i, this.tmpColor.set(STATUS_BULB_COLOR.idle));
+
+      const spriteAnchor = new THREE.Group();
+      spriteAnchor.position.copy(seatWorld);
+      spriteAnchor.rotation.y = rotY;
+      spriteAnchor.scale.setScalar(0.86);
+
+      const nameTag = textSprite(
+        `${role.id.toUpperCase()} · ${role.title.split("/")[0]!.trim()}`,
+        {
+          bg: "#2b2d42",
+          color: "#fffaf3",
+          size: 36,
+          border: "#fffaf3",
+        }
       );
-      this.body.add(foot);
-      this.feet.push(foot);
+      nameTag.position.y = 1.55;
+      nameTag.userData.roleId = role.id;
+      spriteAnchor.add(nameTag);
+      this.root.add(spriteAnchor);
+
+      const slot: WorkerSlot = {
+        index: this.orderedSlots.length,
+        role,
+        pos: seatWorld.clone(),
+        rotY,
+        spriteAnchor,
+        nameTag,
+        bubbleHandle: null,
+        lastBulbStatus: "idle",
+        prevStatus: null,
+        doneElapsed: 0,
+        acts: new Map(),
+        stance: {
+          armLx: 0,
+          armRx: 0,
+          armLz: 0,
+          armRz: 0,
+          reach: 0,
+          drop: 0,
+          lean: 0,
+          turn: 0,
+          roll: 0,
+          lift: 0,
+          tap: 0,
+          kick: 0,
+          lid: 1,
+          look: 0,
+        },
+        scratch: {
+          armLx: 0,
+          armRx: 0,
+          armLz: 0,
+          armRz: 0,
+          reach: 0,
+          drop: 0,
+          lean: 0,
+          turn: 0,
+          roll: 0,
+          lift: 0,
+          tap: 0,
+          kick: 0,
+          lid: 1,
+          look: 0,
+        },
+        t: Math.random() * 5,
+        blinkAt: 2 + Math.random() * 3,
+        flipT: 0,
+        globeBallRotY: 0,
+        globeRingRotZ: 0,
+        showPapers: false,
+        showGlobe: false,
+        bodyMatrix: new THREE.Matrix4(),
+        rootMatrix: new THREE.Matrix4(),
+      };
+      this.slots.set(role.id, slot);
+      this.orderedSlots.push(slot);
     }
 
-    this.papers = buildPapers();
-    this.papers.group.position.set(0, 0.86, 0.4);
-    this.papers.group.rotation.x = 0.35;
-    this.papers.group.visible = false;
-    this.body.add(this.papers.group);
+    const activeCount = this.orderedSlots.length;
+    this.beanMesh.count = activeCount;
+    this.headsetMesh.count = activeCount;
+    this.bulbMesh.count = activeCount;
+    this.armsMesh.count = activeCount * 2;
+    this.feetMesh.count = activeCount * 2;
+    this.eyesMesh.count = activeCount * 2;
+    this.pupilsMesh.count = activeCount * 2;
 
-    this.globe = buildGlobe();
-    this.globe.group.position.set(-0.7, 0.95, 0.85);
-    this.globe.group.visible = false;
-    this.root.add(this.globe.group);
+    if (this.beanMesh.instanceColor) this.beanMesh.instanceColor.needsUpdate = true;
+    if (this.armsMesh.instanceColor) this.armsMesh.instanceColor.needsUpdate = true;
+    if (this.feetMesh.instanceColor) this.feetMesh.instanceColor.needsUpdate = true;
+    if (this.bulbMesh.instanceColor) this.bulbMesh.instanceColor.needsUpdate = true;
 
-    this.nameTag = textSprite(
-      `${role.id.toUpperCase()} · ${role.title.split("/")[0]!.trim()}`,
-      {
-        bg: "#2b2d42",
-        color: "#fffaf3",
-        size: 36,
-        border: "#fffaf3",
-      }
+    this.root.add(
+      this.beanMesh,
+      this.headsetMesh,
+      this.bulbMesh,
+      this.armsMesh,
+      this.feetMesh,
+      this.eyesMesh,
+      this.pupilsMesh,
+      this.papersStackMesh,
+      this.papersPageMesh,
+      this.globeBallMesh,
+      this.globeRingMesh
     );
-    this.nameTag.position.y = 1.55;
-    this.root.add(this.nameTag);
   }
 
-  private updateBubble(live: AgentLiveState, activeProvider: string) {
-    const [chipText, chipBg, chipFg] = CHIP_FOR_STATUS[live.status];
-    const subTag = live.subAgentId ?? `sub-${activeProvider}-${this.role.id}`;
-    const key = `${live.status}|${activeProvider}|${subTag}|${
-      live.currentTicketId ?? ""
-    }|${live.detail.slice(0, 72)}`;
-    if (key === this.bubbleKey) return;
-    this.bubbleKey = key;
+  getPosition(roleId: AgentRoleId): THREE.Vector3 | null {
+    return this.slots.get(roleId)?.pos ?? null;
+  }
 
-    if (this.bubble) {
-      this.root.remove(this.bubble);
-      disposeSprite(this.bubble);
-      this.bubble = null;
-    }
+  setTransform(
+    roleId: AgentRoleId,
+    x: number,
+    y: number,
+    z: number,
+    rotY: number
+  ): void {
+    const slot = this.slots.get(roleId);
+    if (!slot) return;
+    slot.pos.set(x, y, z);
+    slot.rotY = rotY;
+    slot.spriteAnchor.position.set(x, y, z);
+    slot.spriteAnchor.rotation.y = rotY;
+  }
 
+  private updateBubble(
+    slot: WorkerSlot,
+    live: AgentLiveState,
+    activeProvider: string,
+    animating: boolean,
+    nowMs: number
+  ): boolean {
     if (live.status === "idle" && !live.currentTicketId) {
-      return;
+      if (slot.bubbleHandle) {
+        slot.bubbleHandle.sprite.visible = false;
+      }
+      return false;
     }
 
+    const subTag = live.subAgentId ?? `sub-${activeProvider}-${slot.role.id}`;
+    const structuralKey = `${live.status}|${activeProvider}|${subTag}|${
+      live.currentTicketId ?? ""
+    }`;
+    const detailKey = live.detail.slice(0, 72);
+
+    const handle = slot.bubbleHandle;
+    const structChanged = !handle || handle.structuralKey !== structuralKey;
+    const detailChanged = !handle || handle.detailKey !== detailKey;
+
+    if (!structChanged && !detailChanged) {
+      if (handle && !handle.sprite.visible) {
+        handle.sprite.visible = true;
+      }
+      return false;
+    }
+
+    if (
+      !structChanged &&
+      detailChanged &&
+      animating &&
+      nowMs - handle.lastPaintMs < 150
+    ) {
+      return true;
+    }
+
+    const [chipText, chipBg, chipFg] = CHIP_FOR_STATUS[live.status];
     const bg =
       live.status === "waiting_approval" || live.status === "error"
         ? "#ffc2d1"
@@ -664,122 +1056,356 @@ export class ToonWorker {
         ? "#c9184a"
         : "#2b2d42";
 
-    this.bubble = cardSprite({
+    const cardOpts = {
       chip: { text: chipText, bg: chipBg, color: chipFg },
       title: live.currentTicketId
         ? `${live.currentTicketId} · ${subTag}`
-        : `${this.role.title} (${activeProvider})`,
+        : `${slot.role.title} (${activeProvider})`,
       body: live.detail,
       bg,
       border,
-    });
-    this.bubble.position.y = 1.82;
-    this.root.add(this.bubble);
+    };
+
+    if (!slot.bubbleHandle) {
+      const canvas = document.createElement("canvas");
+      const { w, h } = paintCardCanvas(canvas, cardOpts);
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.anisotropy = 4;
+      const mat = new THREE.SpriteMaterial({
+        map: tex,
+        depthWrite: false,
+        transparent: true,
+      });
+      const sprite = new THREE.Sprite(mat);
+      sprite.scale.set((w / CARD_RES) * TEXT_SCALE, (h / CARD_RES) * TEXT_SCALE, 1);
+      sprite.center.set(0.5, 0);
+      sprite.position.y = 1.82;
+      sprite.renderOrder = 10;
+      sprite.userData.roleId = slot.role.id;
+      slot.spriteAnchor.add(sprite);
+      slot.bubbleHandle = {
+        sprite,
+        canvas,
+        tex,
+        structuralKey,
+        detailKey,
+        lastPaintMs: nowMs,
+      };
+    } else {
+      const bh = slot.bubbleHandle;
+      const { w, h, resized } = paintCardCanvas(bh.canvas, cardOpts);
+      if (resized) {
+        bh.tex.dispose();
+        const nextTex = new THREE.CanvasTexture(bh.canvas);
+        nextTex.colorSpace = THREE.SRGBColorSpace;
+        nextTex.anisotropy = 4;
+        bh.tex = nextTex;
+        bh.sprite.material.map = nextTex;
+        bh.sprite.material.needsUpdate = true;
+      } else {
+        bh.tex.needsUpdate = true;
+      }
+      bh.sprite.scale.set(
+        (w / CARD_RES) * TEXT_SCALE,
+        (h / CARD_RES) * TEXT_SCALE,
+        1
+      );
+      bh.sprite.visible = true;
+      bh.structuralKey = structuralKey;
+      bh.detailKey = detailKey;
+      bh.lastPaintMs = nowMs;
+    }
+
+    return false;
   }
 
-  update(
+  updateWorker(
+    roleId: AgentRoleId,
     dt: number,
     live: AgentLiveState,
     reducedMotion: boolean,
-    activeProvider = "antigravity"
+    activeProvider: string,
+    nowMs: number
   ): { animating: boolean; shadowDirty: boolean } {
-    this.t += dt;
-    const statusChanged = live.status !== this.prevStatus;
+    const slot = this.slots.get(roleId);
+    if (!slot) return { animating: false, shadowDirty: false };
+
+    slot.t += dt;
+    const statusChanged = live.status !== slot.prevStatus;
     if (live.status === "done") {
-      this.doneElapsed = this.prevStatus === "done" ? this.doneElapsed + dt : 0;
+      slot.doneElapsed = slot.prevStatus === "done" ? slot.doneElapsed + dt : 0;
     } else {
-      this.doneElapsed = 0;
+      slot.doneElapsed = 0;
     }
-    this.prevStatus = live.status;
+    slot.prevStatus = live.status;
 
-    if (live.status !== this.lastBulbStatus) {
-      this.lastBulbStatus = live.status;
-      const bulbHex = STATUS_BULB_COLOR[live.status];
-      this.bulb.color.set(bulbHex);
-      this.bulb.emissive.set(bulbHex).multiplyScalar(0.6);
+    if (live.status !== slot.lastBulbStatus) {
+      slot.lastBulbStatus = live.status;
+      this.bulbMesh.setColorAt(
+        slot.index,
+        this.tmpColor.set(STATUS_BULB_COLOR[live.status])
+      );
+      if (this.bulbMesh.instanceColor) {
+        this.bulbMesh.instanceColor.needsUpdate = true;
+      }
     }
-
-    this.updateBubble(live, activeProvider);
 
     const act = mapStatusToAct(live.status);
     const s = blendStance(
-      this.acts,
+      slot.acts,
       act,
       reducedMotion ? 1 : dt,
-      reducedMotion ? 0 : this.t,
-      this.scratch,
-      this.stance
+      reducedMotion ? 0 : slot.t,
+      slot.scratch,
+      slot.stance
     );
 
     const doneSettled =
-      live.status === "done" && (reducedMotion || this.doneElapsed >= 3.0);
-    this.body.position.y = reducedMotion || doneSettled ? 0 : s.lift;
-    this.body.rotation.set(s.lean, s.turn, s.roll);
+      live.status === "done" && (reducedMotion || slot.doneElapsed >= 3.0);
 
-    this.armL.position.set(
+    this.dummy.position.copy(slot.pos);
+    this.dummy.rotation.set(0, slot.rotY, 0);
+    this.dummy.scale.setScalar(0.86);
+    this.dummy.updateMatrix();
+    slot.rootMatrix.copy(this.dummy.matrix);
+
+    this.dummy.position.set(0, reducedMotion || doneSettled ? 0 : s.lift, 0);
+    this.dummy.rotation.set(s.lean, s.turn, s.roll);
+    this.dummy.scale.set(1, 1, 1);
+    this.dummy.updateMatrix();
+    slot.bodyMatrix.multiplyMatrices(slot.rootMatrix, this.dummy.matrix);
+
+    this.beanMesh.setMatrixAt(slot.index, slot.bodyMatrix);
+    this.headsetMesh.setMatrixAt(slot.index, slot.bodyMatrix);
+    this.bulbMesh.setMatrixAt(slot.index, slot.bodyMatrix);
+
+    this.dummy.position.set(
       -0.3 + s.reach * 0.08,
       0.55 - s.drop,
       0.05 + s.reach * 0.14
     );
-    this.armR.position.set(
+    this.dummy.rotation.set(s.armLx, 0, s.armLz);
+    this.dummy.scale.set(1, 1, 1);
+    this.dummy.updateMatrix();
+    this.partMat4.multiplyMatrices(slot.bodyMatrix, this.dummy.matrix);
+    this.armsMesh.setMatrixAt(slot.index * 2, this.partMat4);
+
+    this.dummy.position.set(
       0.3 - s.reach * 0.08,
       0.55 - s.drop,
       0.05 + s.reach * 0.14
     );
-    this.armL.rotation.set(s.armLx, 0, s.armLz);
-    this.armR.rotation.set(s.armRx, 0, s.armRz);
+    this.dummy.rotation.set(s.armRx, 0, s.armRz);
+    this.dummy.updateMatrix();
+    this.partMat4.multiplyMatrices(slot.bodyMatrix, this.dummy.matrix);
+    this.armsMesh.setMatrixAt(slot.index * 2 + 1, this.partMat4);
 
-    if (this.feet[0] && this.feet[1]) {
-      this.feet[0].position.set(-0.12, 0.2, 0.05 + s.kick);
-      this.feet[1].position.set(0.12, 0.2 + s.tap * 0.05, 0.05 + s.kick);
-    }
+    this.dummy.rotation.set(0, 0, 0);
+    this.dummy.position.set(-0.12, 0.2, 0.05 + s.kick);
+    this.dummy.updateMatrix();
+    this.partMat4.multiplyMatrices(slot.bodyMatrix, this.dummy.matrix);
+    this.feetMesh.setMatrixAt(slot.index * 2, this.partMat4);
 
-    // Periodic eye blink + pupil look direction (clamp open on throttled 1 Hz ticks)
+    this.dummy.position.set(0.12, 0.2 + s.tap * 0.05, 0.05 + s.kick);
+    this.dummy.updateMatrix();
+    this.partMat4.multiplyMatrices(slot.bodyMatrix, this.dummy.matrix);
+    this.feetMesh.setMatrixAt(slot.index * 2 + 1, this.partMat4);
+
     let blink = s.lid;
     if (!reducedMotion) {
-      this.blinkAt -= dt;
-      if (this.blinkAt <= 0) {
+      slot.blinkAt -= dt;
+      if (slot.blinkAt <= 0) {
         if (dt >= 0.095) {
-          this.blinkAt = 2.4 + Math.random() * 3.5;
+          slot.blinkAt = 2.4 + Math.random() * 3.5;
         } else {
           blink = 0.1;
-          if (this.blinkAt < -0.11) {
-            this.blinkAt = 2.4 + Math.random() * 3.5;
+          if (slot.blinkAt < -0.11) {
+            slot.blinkAt = 2.4 + Math.random() * 3.5;
           }
         }
       }
     }
-    for (const e of this.eyes) e.scale.y = blink;
-    for (const p of this.pupils) p.position.y = 0.7 + s.look;
+    this.dummy.rotation.set(0, 0, 0);
+    this.dummy.scale.set(1, blink, 1);
+    for (let eyeIdx = 0; eyeIdx < 2; eyeIdx++) {
+      const sx = eyeIdx === 0 ? -1 : 1;
+      this.dummy.position.set(sx * 0.11, 0.7, 0.23);
+      this.dummy.updateMatrix();
+      this.partMat4.multiplyMatrices(slot.bodyMatrix, this.dummy.matrix);
+      this.eyesMesh.setMatrixAt(slot.index * 2 + eyeIdx, this.partMat4);
 
-    const showPapers = act === "read";
-    this.papers.group.visible = showPapers;
-    if (showPapers && !reducedMotion) {
-      this.flipT = (this.flipT + dt * 0.45) % 1;
-      const flip = this.flipT > 0.78 ? (this.flipT - 0.78) / 0.22 : 0;
-      this.papers.page.rotation.x = -flip * Math.PI;
+      this.dummy.position.set(sx * 0.11, 0.7 + s.look, 0.29);
+      this.dummy.updateMatrix();
+      this.partMat4.multiplyMatrices(slot.bodyMatrix, this.dummy.matrix);
+      this.pupilsMesh.setMatrixAt(slot.index * 2 + eyeIdx, this.partMat4);
     }
 
-    const showGlobe = act === "web";
-    this.globe.group.visible = showGlobe;
-    if (showGlobe && !reducedMotion) {
-      this.globe.ball.rotation.y += dt * 1.8;
-      this.globe.ring.rotation.z += dt * 0.9;
+    slot.showPapers = act === "read";
+    if (slot.showPapers && !reducedMotion) {
+      slot.flipT = (slot.flipT + dt * 0.45) % 1;
+    }
+    slot.showGlobe = act === "web";
+    if (slot.showGlobe && !reducedMotion) {
+      slot.globeBallRotY += dt * 1.8;
+      slot.globeRingRotZ += dt * 0.9;
     }
 
     const settlingActs =
-      this.acts.size > 1 || Math.abs((this.acts.get(act) ?? 0) - 1) > 0.01;
+      slot.acts.size > 1 || Math.abs((slot.acts.get(act) ?? 0) - 1) > 0.01;
     const activeStatus = live.status !== "idle" && !doneSettled;
     const animating = !reducedMotion && (settlingActs || activeStatus);
+    const bubblePending = this.updateBubble(
+      slot,
+      live,
+      activeProvider,
+      animating,
+      nowMs
+    );
     const shadowDirty = animating || statusChanged;
-    return { animating, shadowDirty };
+    return { animating: animating || bubblePending, shadowDirty };
   }
 
-  dispose() {
-    disposeSprite(this.nameTag);
-    disposeSprite(this.bubble);
-    this.nameTag = null;
-    this.bubble = null;
+  commit(): void {
+    this.beanMesh.instanceMatrix.needsUpdate = true;
+    this.headsetMesh.instanceMatrix.needsUpdate = true;
+    this.bulbMesh.instanceMatrix.needsUpdate = true;
+    this.armsMesh.instanceMatrix.needsUpdate = true;
+    this.feetMesh.instanceMatrix.needsUpdate = true;
+    this.eyesMesh.instanceMatrix.needsUpdate = true;
+    this.pupilsMesh.instanceMatrix.needsUpdate = true;
+
+    let paperIdx = 0;
+    let globeIdx = 0;
+    for (let i = 0; i < this.orderedSlots.length; i++) {
+      const slot = this.orderedSlots[i]!;
+      if (slot.showPapers) {
+        this.dummy.position.set(0, 0.86, 0.4);
+        this.dummy.rotation.set(0.35, 0, 0);
+        this.dummy.scale.set(1, 1, 1);
+        this.dummy.updateMatrix();
+        this.partMat4.multiplyMatrices(slot.bodyMatrix, this.dummy.matrix);
+        this.papersStackMesh.setMatrixAt(paperIdx, this.partMat4);
+
+        const flip = slot.flipT > 0.78 ? (slot.flipT - 0.78) / 0.22 : 0;
+        this.dummy.position.set(0, 0, 0);
+        this.dummy.rotation.set(-flip * Math.PI, 0, 0);
+        this.dummy.updateMatrix();
+        this.subMat4.multiplyMatrices(this.partMat4, this.dummy.matrix);
+        this.papersPageMesh.setMatrixAt(paperIdx, this.subMat4);
+        paperIdx++;
+      }
+
+      if (slot.showGlobe) {
+        this.dummy.position.set(-0.7, 0.95, 0.85);
+        this.dummy.rotation.set(0, slot.globeBallRotY, 0.41);
+        this.dummy.scale.set(1, 1, 1);
+        this.dummy.updateMatrix();
+        this.partMat4.multiplyMatrices(slot.rootMatrix, this.dummy.matrix);
+        this.globeBallMesh.setMatrixAt(globeIdx, this.partMat4);
+
+        this.dummy.position.set(-0.7, 0.95, 0.85);
+        this.dummy.rotation.set(Math.PI / 2 - 0.2, 0, slot.globeRingRotZ);
+        this.dummy.updateMatrix();
+        this.partMat4.multiplyMatrices(slot.rootMatrix, this.dummy.matrix);
+        this.globeRingMesh.setMatrixAt(globeIdx, this.partMat4);
+        globeIdx++;
+      }
+    }
+
+    this.papersStackMesh.count = paperIdx;
+    this.papersPageMesh.count = paperIdx;
+    this.papersStackMesh.visible = paperIdx > 0;
+    this.papersPageMesh.visible = paperIdx > 0;
+    if (paperIdx > 0) {
+      this.papersStackMesh.instanceMatrix.needsUpdate = true;
+      this.papersPageMesh.instanceMatrix.needsUpdate = true;
+    }
+
+    this.globeBallMesh.count = globeIdx;
+    this.globeRingMesh.count = globeIdx;
+    this.globeBallMesh.visible = globeIdx > 0;
+    this.globeRingMesh.visible = globeIdx > 0;
+    if (globeIdx > 0) {
+      this.globeBallMesh.instanceMatrix.needsUpdate = true;
+      this.globeRingMesh.instanceMatrix.needsUpdate = true;
+    }
+  }
+
+  pickRole(raycaster: THREE.Raycaster): AgentRoleId | null {
+    this.beanMesh.computeBoundingSphere();
+    this.headsetMesh.computeBoundingSphere();
+    this.armsMesh.computeBoundingSphere();
+    this.feetMesh.computeBoundingSphere();
+
+    this.raySprites.length = 0;
+    for (let i = 0; i < this.orderedSlots.length; i++) {
+      const slot = this.orderedSlots[i]!;
+      this.raySprites.push(slot.nameTag);
+      if (slot.bubbleHandle && slot.bubbleHandle.sprite.visible) {
+        this.raySprites.push(slot.bubbleHandle.sprite);
+      }
+    }
+
+    const targets: THREE.Object3D[] = [
+      this.beanMesh,
+      this.headsetMesh,
+      this.armsMesh,
+      this.feetMesh,
+      ...this.raySprites,
+    ];
+    const hits = raycaster.intersectObjects(targets, false);
+    if (hits.length === 0) return null;
+    const hit = hits[0]!;
+    if (hit.object === this.beanMesh || hit.object === this.headsetMesh) {
+      return hit.instanceId !== undefined
+        ? (this.orderedSlots[hit.instanceId]?.role.id ?? null)
+        : null;
+    }
+    if (hit.object === this.armsMesh || hit.object === this.feetMesh) {
+      return hit.instanceId !== undefined
+        ? (this.orderedSlots[Math.floor(hit.instanceId / 2)]?.role.id ?? null)
+        : null;
+    }
+    return (hit.object.userData.roleId as AgentRoleId | undefined) ?? null;
+  }
+
+  dispose(): void {
+    this.beanMesh.dispose();
+    this.headsetMesh.dispose();
+    this.bulbMesh.dispose();
+    this.armsMesh.dispose();
+    this.feetMesh.dispose();
+    this.eyesMesh.dispose();
+    this.pupilsMesh.dispose();
+    this.papersStackMesh.dispose();
+    this.papersPageMesh.dispose();
+    this.globeBallMesh.dispose();
+    this.globeRingMesh.dispose();
+
+    this.beanGeo.dispose();
+    this.headsetGeo.dispose();
+    this.bulbGeo.dispose();
+    this.armGeo.dispose();
+    this.footGeo.dispose();
+    this.eyeGeo.dispose();
+    this.pupilGeo.dispose();
+    this.papersStackGeo.dispose();
+    this.papersPageGeo.dispose();
+    this.globeBallGeo.dispose();
+    this.globeRingGeo.dispose();
+
+    this.skinMat.dispose();
+    this.bulbMat.dispose();
+    this.vertexColorMat.dispose();
+
+    for (const slot of this.orderedSlots) {
+      disposeSprite(slot.nameTag);
+      if (slot.bubbleHandle) {
+        disposeSprite(slot.bubbleHandle.sprite);
+        slot.bubbleHandle = null;
+      }
+    }
   }
 }
 
@@ -795,8 +1421,14 @@ export class OfficeDog {
     origUpdate: () => void;
     dirty: boolean;
   }> = [];
+  private mergedDog: THREE.SkinnedMesh | null = null;
+  private mergedDogGeo: THREE.BufferGeometry | null = null;
+  private mergedDogMat: THREE.MeshToonMaterial | null = null;
   private tag: THREE.Sprite | null = null;
   private bubble: THREE.Sprite | null = null;
+  private bubbleCanvas: HTMLCanvasElement | null = null;
+  private bubbleTex: THREE.CanvasTexture | null = null;
+  private lastBubbleText = "";
   private bubbleTimer = 0;
   private t = 0;
   private targetPos = new THREE.Vector3(7.2, 0, 1.5);
@@ -819,26 +1451,76 @@ export class OfficeDog {
         Collar: "#ef476f",
         Tag: "#ffd166",
       };
-      const seenSkeletons = new Set<THREE.Skeleton>();
-      loaded.scene.traverse((o) => {
-        const m = o as THREE.SkinnedMesh;
-        if (!m.isMesh) return;
-        const name = (m.material as THREE.Material)?.name ?? "Fur";
-        m.material = toon(coatColors[name] ?? "#e09f5a");
-        m.castShadow = true;
-        m.receiveShadow = true;
-        m.frustumCulled = false;
 
-        if (m.isSkinnedMesh && m.skeleton && !seenSkeletons.has(m.skeleton)) {
-          seenSkeletons.add(m.skeleton);
-          const origUpdate = m.skeleton.update.bind(m.skeleton);
+      const skinnedMeshes: THREE.SkinnedMesh[] = [];
+      loaded.scene.traverse((o) => {
+        if ((o as THREE.SkinnedMesh).isSkinnedMesh) {
+          skinnedMeshes.push(o as THREE.SkinnedMesh);
+        }
+      });
+
+      if (skinnedMeshes.length > 0) {
+        const primary = skinnedMeshes[0]!;
+        const parentGroup = primary.parent ?? loaded.scene;
+        const parts: THREE.BufferGeometry[] = [];
+        const tmpColor = new THREE.Color();
+
+        for (const m of skinnedMeshes) {
+          // Clone cached GLTF geometry so disposing OfficeDog never corrupts models.ts cache.
+          const g = m.geometry.clone();
+          for (const attrName of Object.keys(g.attributes)) {
+            if (
+              attrName !== "position" &&
+              attrName !== "normal" &&
+              attrName !== "skinIndex" &&
+              attrName !== "skinWeight"
+            ) {
+              g.deleteAttribute(attrName);
+            }
+          }
+          const matName = (m.material as THREE.Material)?.name ?? "Fur";
+          tmpColor.set(coatColors[matName] ?? "#e09f5a");
+          const count = g.attributes.position!.count;
+          const colors = new Float32Array(count * 3);
+          for (let i = 0; i < count; i++) {
+            colors[i * 3] = tmpColor.r;
+            colors[i * 3 + 1] = tmpColor.g;
+            colors[i * 3 + 2] = tmpColor.b;
+          }
+          g.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+          parts.push(g);
+          parentGroup.remove(m);
+        }
+
+        const mergedGeo = mergeGeometries(parts, false);
+        for (const g of parts) g.dispose();
+
+        if (mergedGeo) {
+          const dogMat = new THREE.MeshToonMaterial({
+            color: "#ffffff",
+            vertexColors: true,
+            gradientMap: gradientMap(),
+          });
+          const mergedDog = new THREE.SkinnedMesh(mergedGeo, dogMat);
+          mergedDog.castShadow = true;
+          mergedDog.receiveShadow = true;
+          mergedDog.frustumCulled = false;
+          mergedDog.bind(primary.skeleton, primary.bindMatrix);
+          parentGroup.add(mergedDog);
+
+          this.mergedDog = mergedDog;
+          this.mergedDogGeo = mergedGeo;
+          this.mergedDogMat = dogMat;
+
+          const skel = primary.skeleton;
+          const origUpdate = skel.update.bind(skel);
           const entry = {
-            skeleton: m.skeleton,
+            skeleton: skel,
             origUpdate,
             dirty: true,
           };
           // Skip per-frame boneMatrix/boneTexture uploads when reducedMotion pose is baked.
-          m.skeleton.update = () => {
+          skel.update = () => {
             if (!this.freezeSkeleton || entry.dirty) {
               entry.dirty = false;
               entry.origUpdate();
@@ -846,7 +1528,8 @@ export class OfficeDog {
           };
           this.skeletons.push(entry);
         }
-      });
+      }
+
       this.root.add(loaded.scene);
       this.mixer = new THREE.AnimationMixer(loaded.scene);
       for (const c of loaded.clips) {
@@ -883,13 +1566,45 @@ export class OfficeDog {
   }
 
   private say(text: string, duration: number) {
-    if (this.bubble) {
-      this.root.remove(this.bubble);
-      disposeSprite(this.bubble);
+    if (!this.bubble || !this.bubbleCanvas || !this.bubbleTex) {
+      this.bubbleCanvas = document.createElement("canvas");
+      const { w, h } = paintTextCanvas(this.bubbleCanvas, text, {
+        bg: "#ffd6e0",
+        size: 32,
+      });
+      this.bubbleTex = new THREE.CanvasTexture(this.bubbleCanvas);
+      this.bubbleTex.colorSpace = THREE.SRGBColorSpace;
+      this.bubbleTex.anisotropy = 4;
+      const mat = new THREE.SpriteMaterial({
+        map: this.bubbleTex,
+        depthWrite: false,
+        transparent: true,
+      });
+      this.bubble = new THREE.Sprite(mat);
+      this.bubble.scale.set(w * TEXT_SCALE, h * TEXT_SCALE, 1);
+      this.bubble.position.y = 1.28;
+      this.bubble.renderOrder = 10;
+      this.root.add(this.bubble);
+      this.lastBubbleText = text;
+    } else if (text !== this.lastBubbleText) {
+      const { w, h, resized } = paintTextCanvas(this.bubbleCanvas, text, {
+        bg: "#ffd6e0",
+        size: 32,
+      });
+      if (resized) {
+        this.bubbleTex.dispose();
+        this.bubbleTex = new THREE.CanvasTexture(this.bubbleCanvas);
+        this.bubbleTex.colorSpace = THREE.SRGBColorSpace;
+        this.bubbleTex.anisotropy = 4;
+        this.bubble.material.map = this.bubbleTex;
+        this.bubble.material.needsUpdate = true;
+      } else {
+        this.bubbleTex.needsUpdate = true;
+      }
+      this.bubble.scale.set(w * TEXT_SCALE, h * TEXT_SCALE, 1);
+      this.lastBubbleText = text;
     }
-    this.bubble = textSprite(text, { bg: "#ffd6e0", size: 32 });
-    this.bubble.position.y = 1.28;
-    this.root.add(this.bubble);
+    this.bubble.visible = true;
     this.bubbleTimer = duration;
   }
 
@@ -899,12 +1614,10 @@ export class OfficeDog {
     reducedMotion: boolean
   ): { active: boolean; shadowDirty: boolean } {
     this.t += dt;
-    if (this.bubble) {
+    if (this.bubble && this.bubble.visible) {
       this.bubbleTimer -= dt;
       if (this.bubbleTimer <= 0) {
-        this.root.remove(this.bubble);
-        disposeSprite(this.bubble);
-        this.bubble = null;
+        this.bubble.visible = false;
       }
     }
 
@@ -937,11 +1650,11 @@ export class OfficeDog {
       }
       if (needyDeskPos) {
         wantClip = "sit";
-        if (!this.bubble && Math.floor(this.t * 2) % 6 === 0) {
+        if ((!this.bubble || !this.bubble.visible) && Math.floor(this.t * 2) % 6 === 0) {
           this.say("Woof! Approval needed!", 1.8);
         }
       } else {
-        wantClip = this.bubble ? "wag" : "lie";
+        wantClip = this.bubble?.visible ? "wag" : "lie";
       }
     }
 
@@ -999,7 +1712,7 @@ export class OfficeDog {
 
     const active =
       !reducedMotion &&
-      (moved || Boolean(this.bubble) || clipsBlending || Boolean(needyDeskPos));
+      (moved || Boolean(this.bubble?.visible) || clipsBlending || Boolean(needyDeskPos));
     const shadowDirty = moved || skeletonBaked || clipsBlending || active;
     return { active, shadowDirty };
   }
@@ -1015,73 +1728,135 @@ export class OfficeDog {
       entry.skeleton.dispose();
     }
     this.skeletons.length = 0;
+    this.mergedDogGeo?.dispose();
+    this.mergedDogMat?.dispose();
+    this.mergedDog = null;
+    this.mergedDogGeo = null;
+    this.mergedDogMat = null;
     disposeSprite(this.tag);
     disposeSprite(this.bubble);
     this.tag = null;
     this.bubble = null;
+    this.bubbleCanvas = null;
+    this.bubbleTex = null;
   }
 }
+
+const MAX_CONFETTI = 288;
+const CONFETTI_COLORS = ["#ff8a5b", "#06d6a0", "#ffd166", "#ef476f", "#5bc0eb"];
 
 export class ConfettiSystem {
   readonly group = new THREE.Group();
   private readonly geo = new THREE.BoxGeometry(0.08, 0.02, 0.05);
+  private readonly mat = toonUnique("#ffffff", { outline: false });
+  private readonly instanced = new THREE.InstancedMesh(
+    this.geo,
+    this.mat,
+    MAX_CONFETTI
+  );
   private readonly pieces: Array<{
-    mesh: THREE.Mesh;
+    x: number;
+    y: number;
+    z: number;
+    rx: number;
+    rz: number;
     vx: number;
     vy: number;
     vz: number;
     life: number;
   }> = [];
+  private readonly dummy = new THREE.Object3D();
+  private readonly tmpColor = new THREE.Color();
+
+  constructor() {
+    this.instanced.castShadow = false;
+    this.instanced.receiveShadow = false;
+    this.instanced.frustumCulled = false;
+    this.instanced.count = 0;
+    this.instanced.visible = false;
+    this.instanced.setColorAt(0, this.tmpColor.set("#ffffff"));
+    this.group.add(this.instanced);
+  }
 
   get isActive(): boolean {
     return this.pieces.length > 0;
   }
 
   burst(x: number, y: number, z: number) {
-    const colors = ["#ff8a5b", "#06d6a0", "#ffd166", "#ef476f", "#5bc0eb"];
     for (let i = 0; i < 36; i++) {
-      const m = mesh(
-        this.geo,
-        toon(colors[i % colors.length]!),
-        x + (Math.random() - 0.5) * 0.4,
-        y + 1.2 + Math.random() * 0.4,
-        z + (Math.random() - 0.5) * 0.4,
-        false
-      );
-      this.group.add(m);
+      if (this.pieces.length >= MAX_CONFETTI) break;
+      const idx = this.pieces.length;
       this.pieces.push({
-        mesh: m,
+        x: x + (Math.random() - 0.5) * 0.4,
+        y: y + 1.2 + Math.random() * 0.4,
+        z: z + (Math.random() - 0.5) * 0.4,
+        rx: 0,
+        rz: 0,
         vx: (Math.random() - 0.5) * 2.5,
         vy: 1.5 + Math.random() * 2.2,
         vz: (Math.random() - 0.5) * 2.5,
         life: 2.2,
       });
+      this.instanced.setColorAt(
+        idx,
+        this.tmpColor.set(CONFETTI_COLORS[i % CONFETTI_COLORS.length]!)
+      );
+    }
+    this.instanced.count = this.pieces.length;
+    this.instanced.visible = this.pieces.length > 0;
+    if (this.instanced.instanceColor) {
+      this.instanced.instanceColor.needsUpdate = true;
     }
   }
 
   update(dt: number) {
+    if (this.pieces.length === 0) return;
+
+    let colorChanged = false;
     for (let i = this.pieces.length - 1; i >= 0; i--) {
       const p = this.pieces[i]!;
       p.life -= dt;
-      if (p.life <= 0 || p.mesh.position.y <= 0.04) {
-        this.group.remove(p.mesh);
-        this.pieces.splice(i, 1);
+      if (p.life <= 0 || p.y <= 0.04) {
+        const lastIdx = this.pieces.length - 1;
+        if (i !== lastIdx) {
+          this.pieces[i] = this.pieces[lastIdx]!;
+          this.instanced.getColorAt(lastIdx, this.tmpColor);
+          this.instanced.setColorAt(i, this.tmpColor);
+          colorChanged = true;
+        }
+        this.pieces.pop();
         continue;
       }
       p.vy -= 4.8 * dt;
-      p.mesh.position.x += p.vx * dt;
-      p.mesh.position.y += p.vy * dt;
-      p.mesh.position.z += p.vz * dt;
-      p.mesh.rotation.x += 5 * dt;
-      p.mesh.rotation.z += 4 * dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.z += p.vz * dt;
+      p.rx += 5 * dt;
+      p.rz += 4 * dt;
+
+      this.dummy.position.set(p.x, p.y, p.z);
+      this.dummy.rotation.set(p.rx, 0, p.rz);
+      this.dummy.scale.set(1, 1, 1);
+      this.dummy.updateMatrix();
+      this.instanced.setMatrixAt(i, this.dummy.matrix);
+    }
+
+    this.instanced.count = this.pieces.length;
+    this.instanced.visible = this.pieces.length > 0;
+    if (this.pieces.length > 0) {
+      this.instanced.instanceMatrix.needsUpdate = true;
+      if (colorChanged && this.instanced.instanceColor) {
+        this.instanced.instanceColor.needsUpdate = true;
+      }
     }
   }
 
   dispose() {
-    for (const p of this.pieces) {
-      this.group.remove(p.mesh);
-    }
     this.pieces.length = 0;
+    this.instanced.count = 0;
+    this.instanced.visible = false;
+    this.instanced.dispose();
     this.geo.dispose();
+    this.mat.dispose();
   }
 }

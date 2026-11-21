@@ -1,12 +1,10 @@
-import React from "react";
-import { useShallow } from "zustand/react/shallow";
+import React, { useMemo } from "react";
 import { useOfficeStore } from "../store/office-store.ts";
 import { formatEventLine } from "./format-event.ts";
 
-export const EventFeed: React.FC = () => {
-  const topEvents = useOfficeStore(
-    useShallow((s) => s.recentEvents.slice(0, 5))
-  );
+export const EventFeed: React.FC = React.memo(() => {
+  const recentEvents = useOfficeStore((s) => s.recentEvents);
+  const topEvents = useMemo(() => recentEvents.slice(0, 5), [recentEvents]);
 
   return (
     <footer
@@ -30,4 +28,6 @@ export const EventFeed: React.FC = () => {
       </div>
     </footer>
   );
-};
+});
+
+EventFeed.displayName = "EventFeed";

@@ -79,7 +79,6 @@ export const TicketSchema = z.object({
   stage: TicketStageSchema,
   assignee: AgentRoleIdSchema.nullable(),
   authorRole: z.enum(["fe", "be"]).default("fe"),
-  authorProvider: ProviderIdSchema.optional(),
   branch: z.string().optional(),
   worktreePath: z.string().optional(),
   specPath: z.string().optional(),
@@ -134,14 +133,6 @@ export const RoleConfigSchema = z.object({
   zone: z.string().min(1),
   tint: z.string().regex(/^#[0-9a-fA-F]{6}$/),
   accessory: z.string().min(1),
-  runtime: RuntimeKindSchema,
-  provider: ProviderIdSchema,
-  model: z.string().optional(),
-  fallback: z.object({
-    runtime: RuntimeKindSchema,
-    provider: ProviderIdSchema,
-    model: z.string().optional(),
-  }),
   tools: z.array(z.string()),
   allowCommands: z.array(z.string()),
 });
@@ -149,6 +140,9 @@ export type RoleConfig = z.infer<typeof RoleConfigSchema>;
 
 export const OfficeConfigSchema = z.object({
   version: z.literal(1),
+  activeProvider: ProviderIdSchema.default("antigravity"),
+  activeRuntime: RuntimeKindSchema.optional(),
+  activeModel: z.string().trim().min(1).nullable().optional(),
   office: z.object({
     name: z.string().min(1),
     host: z.string().default("127.0.0.1"),
@@ -156,7 +150,7 @@ export const OfficeConfigSchema = z.object({
     targetRepo: z.string().min(1),
     worktreesDir: z.string().min(1),
   }),
-  providers: z.record(ProviderIdSchema, ProviderConfigSchema),
+  providers: z.record(ProviderIdSchema, ProviderConfigSchema).default({}),
   limits: z.object({
     reviewRounds: z.number().int().positive().default(3),
     qaBounces: z.number().int().positive().default(2),
@@ -166,7 +160,6 @@ export const OfficeConfigSchema = z.object({
     dailyUsd: z.number().positive().default(15.0),
     concurrency: z.object({
       total: z.number().int().positive().default(4),
-      perProvider: z.record(ProviderIdSchema, z.number().int().positive()),
     }),
   }),
   roles: z.array(RoleConfigSchema).length(8),
@@ -273,6 +266,7 @@ export const AgentEventSchema = z.discriminatedUnion("t", [
     t: z.literal("provider.changed"),
     provider: ProviderIdSchema,
     runtime: RuntimeKindSchema,
+    model: z.string().trim().min(1).nullable().optional(),
   }),
   z.object({
     ...BaseEventFields,

@@ -36,6 +36,7 @@ export interface PendingApproval {
 export interface OfficeStateSnapshot {
   activeProvider: ProviderId;
   activeRuntime: RuntimeKind;
+  activeModel: string | null;
   agents: Record<AgentRoleId, AgentLiveState>;
   tickets: Record<string, Ticket>;
   taskTable: Record<string, TaskTableRow>;
@@ -76,6 +77,7 @@ export function createInitialOfficeState(): OfficeStateSnapshot {
   return {
     activeProvider: "antigravity",
     activeRuntime: "jcode",
+    activeModel: null,
     agents,
     tickets: {},
     taskTable: {},

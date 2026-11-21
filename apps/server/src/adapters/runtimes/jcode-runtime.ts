@@ -6,7 +6,11 @@ import type {
   AgentRoleId,
   ProviderId,
 } from "@agent-office/protocol";
-import { MANAGED_SECRET_KEYS, PROVIDER_METADATA } from "../../domain/providers.ts";
+import {
+  PROVIDER_METADATA,
+  SCRUBBED_SECRET_ENV_KEYS,
+  validateRuntimeForProvider,
+} from "../../domain/providers.ts";
 import {
   getJcodeToolsFlagForRole,
   mapToolToAgentStatus,
@@ -328,8 +332,28 @@ export class JcodeRuntimeAdapter implements AgentRuntimePort {
   }
 
   async *run(req: AgentRunRequest): AsyncIterable<AgentEvent> {
-    const provider = req.providerOverride ?? req.role.provider;
-    const jcodeProvider = PROVIDER_METADATA[provider].jcodeProvider;
+    const uid = () => crypto.randomUUID();
+    const provider = req.provider;
+    try {
+      validateRuntimeForProvider(provider, this.kind);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      yield {
+        id: uid(),
+        ts: Date.now(),
+        t: "agent.status",
+        agentId: req.role.id,
+        runId: req.runId,
+        ticketId: req.ticket.id,
+        status: "error",
+        detail: msg,
+        targetZone: req.role.zone,
+      };
+      throw err;
+    }
+
+    const providerMeta = PROVIDER_METADATA[provider];
+    const jcodeProvider = providerMeta.jcodeProvider;
     const toolsFlag = getJcodeToolsFlagForRole(req.role.id, req.role);
     const cliArgs = [
       "run",
@@ -343,18 +367,23 @@ export class JcodeRuntimeAdapter implements AgentRuntimePort {
       "--tools",
       toolsFlag,
     ];
-    if (req.role.model) {
-      cliArgs.push("-m", req.role.model);
+    const model = req.model?.trim();
+    if (model) {
+      cliArgs.push("-m", model);
     }
     cliArgs.push(req.prompt);
 
+    // Strip all provider secrets before injecting only the active API-key provider's key.
     const env: NodeJS.ProcessEnv = { ...process.env };
-    for (const keyName of MANAGED_SECRET_KEYS) {
-      const secret = this.secrets.getSecret(keyName);
-      if (secret) env[keyName] = secret;
+    for (const keyName of SCRUBBED_SECRET_ENV_KEYS) {
+      delete env[keyName];
     }
-
-    const uid = () => crypto.randomUUID();
+    if (providerMeta.authMode === "api-key") {
+      const secret = this.secrets.getSecret(providerMeta.envKey);
+      if (secret && secret.trim()) {
+        env[providerMeta.envKey] = secret;
+      }
+    }
     yield {
       id: uid(),
       ts: Date.now(),

@@ -8,11 +8,12 @@ export interface DispatchTicketModalProps {
   onClose: () => void;
 }
 
-export const DispatchTicketModal: React.FC<DispatchTicketModalProps> = ({
-  open,
+const DispatchTicketModalContent: React.FC<{ onClose: () => void }> = ({
   onClose,
 }) => {
   const activeProvider = useOfficeStore((s) => s.snapshot.activeProvider);
+  const activeRuntime = useOfficeStore((s) => s.snapshot.activeRuntime);
+  const activeModel = useOfficeStore((s) => s.snapshot.activeModel);
   const submitTicket = useOfficeStore((s) => s.submitTicket);
   const clearError = useOfficeStore((s) => s.clearError);
 
@@ -29,11 +30,9 @@ export const DispatchTicketModal: React.FC<DispatchTicketModalProps> = ({
   const titleInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (open) {
-      setSubmitFeedback(null);
-      setSubmitting(false);
-    }
-  }, [open]);
+    setSubmitFeedback(null);
+    setSubmitting(false);
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -68,7 +67,7 @@ export const DispatchTicketModal: React.FC<DispatchTicketModalProps> = ({
 
   return (
     <ModalDialog
-      open={open}
+      open
       titleId="dispatch-modal-title"
       title="Dispatch Task to Dev Office"
       closeLabel="Close Dispatch Task modal"
@@ -172,7 +171,9 @@ export const DispatchTicketModal: React.FC<DispatchTicketModalProps> = ({
                 test)
               </option>
               <option value="live">
-                Live AI Providers (jcode OAuth + Configured API Keys)
+                Live Single Provider ({activeProvider.toUpperCase()} via{" "}
+                {activeRuntime}
+                {activeModel ? `, ${activeModel}` : ""})
               </option>
             </select>
           </div>
@@ -193,3 +194,11 @@ export const DispatchTicketModal: React.FC<DispatchTicketModalProps> = ({
     </ModalDialog>
   );
 };
+
+export const DispatchTicketModal: React.FC<DispatchTicketModalProps> =
+  React.memo(({ open, onClose }) => {
+    if (!open) return null;
+    return <DispatchTicketModalContent onClose={onClose} />;
+  });
+
+DispatchTicketModal.displayName = "DispatchTicketModal";

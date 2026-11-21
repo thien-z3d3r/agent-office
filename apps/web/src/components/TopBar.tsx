@@ -1,21 +1,24 @@
 import React from "react";
+import type { AgentRoleId } from "@agent-office/protocol";
 import { useOfficeStore } from "../store/office-store.ts";
 import { HudDock, type HudDockProps } from "./HudDock.tsx";
 
 export type TopBarProps = HudDockProps;
 
-export const TopBar: React.FC<TopBarProps> = (props) => {
+export const TopBar: React.FC<TopBarProps> = React.memo((props) => {
   const connected = useOfficeStore((s) => s.connected);
   const activeProvider = useOfficeStore((s) => s.snapshot.activeProvider);
   const activeRuntime = useOfficeStore((s) => s.snapshot.activeRuntime);
   const rolesCount = useOfficeStore((s) => s.roles.length);
-  const approvalsCount = useOfficeStore(
-    (s) => Object.keys(s.snapshot.approvals).length
-  );
+  const approvalsCount = useOfficeStore((s) => {
+    let count = 0;
+    for (const _ in s.snapshot.approvals) count += 1;
+    return count;
+  });
   const activeWorkersCount = useOfficeStore((s) => {
     let count = 0;
-    for (const agent of Object.values(s.snapshot.agents)) {
-      if (agent.status !== "idle") count += 1;
+    for (const id in s.snapshot.agents) {
+      if (s.snapshot.agents[id as AgentRoleId]?.status !== "idle") count += 1;
     }
     return count;
   });
@@ -49,4 +52,6 @@ export const TopBar: React.FC<TopBarProps> = (props) => {
       <HudDock {...props} />
     </header>
   );
-};
+});
+
+TopBar.displayName = "TopBar";

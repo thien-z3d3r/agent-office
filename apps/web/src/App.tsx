@@ -17,6 +17,7 @@ import { ProvidersModal } from "./components/ProvidersModal.tsx";
 
 export const App: React.FC = () => {
   const reducedMotion = useOfficeStore((s) => s.reducedMotion);
+  const performanceMode = useOfficeStore((s) => s.performanceMode);
   const settingsOpen = useOfficeStore((s) => s.settingsOpen);
   const setSettingsOpen = useOfficeStore((s) => s.setSettingsOpen);
   const setSelectedRole = useOfficeStore((s) => s.setSelectedRole);
@@ -41,6 +42,8 @@ export const App: React.FC = () => {
 
   const anyModalOpen =
     dispatchModalOpen || inspectorModalOpen || settingsOpen;
+  const stageInert = anyModalOpen || !sceneReady;
+  const hudInert = stageInert || cameraPreset === "telescope";
   const hasSidePanels = showWorkersPanel || showQueuePanel || showSpendPanel;
 
   useEffect(() => {
@@ -58,13 +61,13 @@ export const App: React.FC = () => {
   useLayoutEffect(() => {
     const stageMain = stageMainRef.current;
     const hud = hudRef.current;
-    if (stageMain) stageMain.inert = anyModalOpen;
-    if (hud) hud.inert = anyModalOpen;
+    if (stageMain) stageMain.inert = stageInert;
+    if (hud) hud.inert = hudInert;
     return () => {
       if (stageMain) stageMain.inert = false;
       if (hud) hud.inert = false;
     };
-  }, [anyModalOpen]);
+  }, [stageInert, hudInert]);
 
   useEffect(() => {
     if (cameraPreset !== "telescope" || anyModalOpen) return;
@@ -89,6 +92,54 @@ export const App: React.FC = () => {
     setSceneReady(true);
   }, []);
 
+  const handleExitTelescope = useCallback(() => {
+    setCameraPreset("overview");
+  }, []);
+
+  const handleToggleNightMode = useCallback(() => {
+    setNightMode((n) => !n);
+  }, []);
+
+  const handleToggleMeeting = useCallback(() => {
+    setCameraPreset((p) => (p === "meeting" ? "overview" : "meeting"));
+  }, []);
+
+  const handleToggleTelescope = useCallback(() => {
+    setCameraPreset((p) => (p === "telescope" ? "overview" : "telescope"));
+  }, []);
+
+  const handleToggleWorkersPanel = useCallback(() => {
+    setShowWorkersPanel((v) => !v);
+  }, []);
+
+  const handleToggleQueuePanel = useCallback(() => {
+    setShowQueuePanel((v) => !v);
+  }, []);
+
+  const handleHideWorkersPanel = useCallback(() => {
+    setShowWorkersPanel(false);
+  }, []);
+
+  const handleHideQueuePanel = useCallback(() => {
+    setShowQueuePanel(false);
+  }, []);
+
+  const handleHideSpendPanel = useCallback(() => {
+    setShowSpendPanel(false);
+  }, []);
+
+  const handleOpenDispatch = useCallback(() => {
+    setDispatchModalOpen(true);
+  }, []);
+
+  const handleCloseDispatch = useCallback(() => {
+    setDispatchModalOpen(false);
+  }, []);
+
+  const handleCloseInspector = useCallback(() => {
+    setInspectorModalOpen(false);
+  }, []);
+
   const handleCloseSettings = useCallback(() => {
     setSettingsOpen(false);
   }, [setSettingsOpen]);
@@ -99,13 +150,14 @@ export const App: React.FC = () => {
       className={reducedMotion ? "hud-root reduced-motion" : "hud-root"}
       data-theme={nightMode ? "night" : "day"}
       data-reduced-motion={reducedMotion ? "true" : "false"}
+      data-performance-mode={performanceMode ? "true" : "false"}
     >
       {!sceneReady && <LoadingOverlay loadPct={loadPct} />}
 
       <main
         ref={stageMainRef}
         id="stage-main"
-        aria-hidden={anyModalOpen || undefined}
+        aria-hidden={stageInert || undefined}
       >
         <OfficeCanvas
           nightMode={nightMode}
@@ -115,7 +167,7 @@ export const App: React.FC = () => {
         />
 
         {cameraPreset === "telescope" && (
-          <TelescopeOverlay onExit={() => setCameraPreset("overview")} />
+          <TelescopeOverlay onExit={handleExitTelescope} />
         )}
       </main>
 
@@ -123,7 +175,7 @@ export const App: React.FC = () => {
         ref={hudRef}
         id="hud"
         className={hasSidePanels ? undefined : "no-side"}
-        aria-hidden={anyModalOpen || undefined}
+        aria-hidden={hudInert || undefined}
       >
         <a
           href={hasSidePanels ? "#office-panels" : "#office-events"}
@@ -134,34 +186,28 @@ export const App: React.FC = () => {
 
         <TopBar
           nightMode={nightMode}
-          onToggleNightMode={() => setNightMode((n) => !n)}
+          onToggleNightMode={handleToggleNightMode}
           cameraPreset={cameraPreset}
-          onToggleMeeting={() =>
-            setCameraPreset((p) => (p === "meeting" ? "overview" : "meeting"))
-          }
-          onToggleTelescope={() =>
-            setCameraPreset((p) =>
-              p === "telescope" ? "overview" : "telescope"
-            )
-          }
+          onToggleMeeting={handleToggleMeeting}
+          onToggleTelescope={handleToggleTelescope}
           showWorkersPanel={showWorkersPanel}
-          onToggleWorkersPanel={() => setShowWorkersPanel((v) => !v)}
+          onToggleWorkersPanel={handleToggleWorkersPanel}
           showQueuePanel={showQueuePanel}
-          onToggleQueuePanel={() => setShowQueuePanel((v) => !v)}
-          onOpenDispatch={() => setDispatchModalOpen(true)}
+          onToggleQueuePanel={handleToggleQueuePanel}
+          onOpenDispatch={handleOpenDispatch}
         />
 
         <ErrorBanner />
 
         <SidePanel
           showWorkersPanel={showWorkersPanel}
-          onHideWorkersPanel={() => setShowWorkersPanel(false)}
+          onHideWorkersPanel={handleHideWorkersPanel}
           showQueuePanel={showQueuePanel}
-          onHideQueuePanel={() => setShowQueuePanel(false)}
+          onHideQueuePanel={handleHideQueuePanel}
           showSpendPanel={showSpendPanel}
-          onHideSpendPanel={() => setShowSpendPanel(false)}
+          onHideSpendPanel={handleHideSpendPanel}
           onInspectRole={openAgentInspector}
-          onOpenDispatch={() => setDispatchModalOpen(true)}
+          onOpenDispatch={handleOpenDispatch}
         />
 
         <EventFeed />
@@ -171,12 +217,12 @@ export const App: React.FC = () => {
 
       <DispatchTicketModal
         open={dispatchModalOpen}
-        onClose={() => setDispatchModalOpen(false)}
+        onClose={handleCloseDispatch}
       />
 
       <AgentInspectorModal
         open={inspectorModalOpen}
-        onClose={() => setInspectorModalOpen(false)}
+        onClose={handleCloseInspector}
       />
 
       <ProvidersModal open={settingsOpen} onClose={handleCloseSettings} />

@@ -23,6 +23,7 @@ export interface LoadedModel {
 
 const loading = new Map<ModelName, Promise<GLTF>>();
 const loaded = new Map<ModelName, GLTF>();
+const gltfLoader = new GLTFLoader();
 
 export interface ModelsProgress {
   asked: number;
@@ -49,7 +50,7 @@ function notifyProgress() {
 function fetchModel(name: ModelName): Promise<GLTF> {
   let p = loading.get(name);
   if (!p) {
-    p = new GLTFLoader()
+    p = gltfLoader
       .loadAsync(MODEL_URLS[name])
       .then((gltf) => {
         loaded.set(name, gltf);
