@@ -1,5 +1,13 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import type { AgentRoleId, TicketSize } from "@agent-office/protocol";
+import { Banner } from "@astryxdesign/core/Banner";
+import { Button } from "@astryxdesign/core/Button";
+import { Icon } from "@astryxdesign/core/Icon";
+import { Selector } from "@astryxdesign/core/Selector";
+import { TextArea } from "@astryxdesign/core/TextArea";
+import { TextInput } from "@astryxdesign/core/TextInput";
+import { VStack } from "@astryxdesign/core/VStack";
+import { Send } from "lucide-react";
 import { useOfficeStore } from "../store/office-store.ts";
 import { PROVIDER_META_BY_ID } from "../store/provider-catalog.ts";
 import { ModalDialog } from "./ModalDialog.tsx";
@@ -46,19 +54,71 @@ const DispatchTicketModalContent: React.FC<{ onClose: () => void }> = ({
   const [submitting, setSubmitting] = useState(false);
   const [submitFeedback, setSubmitFeedback] = useState<string | null>(null);
 
-  const titleInputRef = useRef<HTMLInputElement>(null);
-
   useEffect(() => {
     setSubmitFeedback(null);
     setSubmitting(false);
   }, []);
+
+  const sizeOptions = useMemo(
+    () => [
+      {
+        value: "S",
+        label: "Size S · Fast Fix",
+        description: "EM triage -> Engineer -> Reviewer -> Merge",
+      },
+      {
+        value: "M",
+        label: "Size M · Feature + QA",
+        description: "Adds dedicated QA Engineer test verification",
+      },
+      {
+        value: "L",
+        label: "Size L · Full 8-Role Flow",
+        description: "PM spec + TL ADR + Dev + Review + QA + DevOps",
+      },
+    ],
+    []
+  );
+
+  const authorOptions = useMemo(
+    () => [
+      {
+        value: "be",
+        label: "Backend Engineer (BE)",
+        description: `Runs on ${PROVIDER_META_BY_ID[activeProvider].shortLabel}`,
+      },
+      {
+        value: "fe",
+        label: "Frontend Engineer (FE)",
+        description: `Runs on ${PROVIDER_META_BY_ID[activeProvider].shortLabel}`,
+      },
+    ],
+    [activeProvider]
+  );
+
+  const modeOptions = useMemo(
+    () => [
+      {
+        value: "scripted",
+        label: "Scripted Simulation ($0 cost)",
+        description: "Deterministic local git worktree workflow preview",
+      },
+      {
+        value: "live",
+        label: `Live Provider (${PROVIDER_META_BY_ID[activeProvider].shortLabel})`,
+        description: `${activeRuntime} · ${effectiveDefaultModel}${
+          roleOverrideCount > 0 ? ` (+${roleOverrideCount} overrides)` : ""
+        }`,
+      },
+    ],
+    [activeProvider, activeRuntime, effectiveDefaultModel, roleOverrideCount]
+  );
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const trimmedTitle = title.trim();
     if (!trimmedTitle) {
       setSubmitFeedback("Ticket title is required before dispatching.");
-      titleInputRef.current?.focus();
       return;
     }
 
@@ -87,131 +147,83 @@ const DispatchTicketModalContent: React.FC<{ onClose: () => void }> = ({
   return (
     <ModalDialog
       open
-      titleId="dispatch-modal-title"
+      width={600}
+      purpose="form"
       title="Dispatch Task to Dev Office"
-      closeLabel="Close Dispatch Task modal"
+      subtitle={`Assigns a new ticket to ${PROVIDER_META_BY_ID[activeProvider].shortLabel} sub-agents`}
       onClose={onClose}
-      initialFocusRef={titleInputRef}
+      footer={
+        <>
+          <Button variant="secondary" label="Cancel" onClick={onClose} />
+          <Button
+            variant="primary"
+            type="submit"
+            form="dispatch-ticket-form"
+            icon={<Icon icon={Send} />}
+            isLoading={submitting}
+            label={submitting ? "Dispatching..." : "Dispatch Task"}
+          />
+        </>
+      }
     >
-      <form onSubmit={(e) => void handleSubmit(e)}>
-        <div className="body">
-          {submitFeedback && (
-            <div id="dispatch-error" className="inline-alert" role="alert">
-              <span className="pill error">Error</span>
-              <span>{submitFeedback}</span>
-            </div>
+      <form id="dispatch-ticket-form" onSubmit={(e) => void handleSubmit(e)}>
+        <VStack gap={4}>
+          {submitFeedback && !titleMissing && (
+            <Banner status="error" title="Dispatch failed" description={submitFeedback} />
           )}
 
-          <div className="field-group">
-            <label htmlFor="ticket-title-input">Ticket Title</label>
-            <input
-              ref={titleInputRef}
-              id="ticket-title-input"
-              type="text"
-              className="input-control"
-              value={title}
-              aria-invalid={titleMissing ? "true" : undefined}
-              aria-describedby={submitFeedback ? "dispatch-error" : undefined}
-              onChange={(e) => {
-                setTitle(e.target.value);
-                if (submitFeedback) setSubmitFeedback(null);
-              }}
-              placeholder="e.g. Add subtract(a, b) helper to src/math.ts"
+          <TextInput
+            label="Ticket Title"
+            isRequired
+            hasAutoFocus
+            width="100%"
+            value={title}
+            status={
+              titleMissing
+                ? { type: "error", message: submitFeedback ?? "Required" }
+                : undefined
+            }
+            onChange={(val) => {
+              setTitle(val);
+              if (submitFeedback) setSubmitFeedback(null);
+            }}
+            placeholder="e.g. Add subtract(a, b) helper to src/math.ts"
+          />
+
+          <TextArea
+            label="Task Specification & Acceptance Criteria"
+            width="100%"
+            value={description}
+            onChange={setDescription}
+            placeholder="Describe what the engineer, reviewer, and QA should verify..."
+          />
+
+          <div className="modal-grid-2">
+            <Selector
+              label="Workflow Size"
+              width="100%"
+              value={size}
+              options={sizeOptions}
+              onChange={(val) => setSize(val as TicketSize)}
+            />
+
+            <Selector
+              label="Primary Engineer Seat"
+              width="100%"
+              value={authorRole}
+              options={authorOptions}
+              onChange={(val) => setAuthorRole(val as "fe" | "be")}
             />
           </div>
 
-          <div className="field-group">
-            <label htmlFor="ticket-desc-input">
-              Task Specification & Acceptance Criteria
-            </label>
-            <textarea
-              id="ticket-desc-input"
-              rows={3}
-              className="input-control"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Describe what the engineer, reviewer, and QA should verify..."
-            />
-          </div>
-
-          <div className="field-grid-2">
-            <div className="field-group">
-              <label htmlFor="ticket-size-select">Workflow Size</label>
-              <select
-                id="ticket-size-select"
-                className="input-control"
-                value={size}
-                onChange={(e) => setSize(e.target.value as TicketSize)}
-              >
-                <option value="S">
-                  Size S (EM -&gt; Dev -&gt; Review -&gt; Merge)
-                </option>
-                <option value="M">Size M (+ QA Engineer Tests)</option>
-                <option value="L">
-                  Size L (Full 8-Role: PM Spec + TL ADR + Dev + Review + QA)
-                </option>
-              </select>
-            </div>
-
-            <div className="field-group">
-              <label htmlFor="ticket-author-select">
-                Primary Engineer Seat
-              </label>
-              <select
-                id="ticket-author-select"
-                className="input-control"
-                value={authorRole}
-                onChange={(e) =>
-                  setAuthorRole(e.target.value as "fe" | "be")
-                }
-              >
-                <option value="be">
-                  Backend Engineer Sub-Agent ({activeProvider.toUpperCase()})
-                </option>
-                <option value="fe">
-                  Frontend Engineer Sub-Agent ({activeProvider.toUpperCase()})
-                </option>
-              </select>
-            </div>
-          </div>
-
-          <div className="field-group">
-            <label htmlFor="ticket-mode-select">Execution Runtime</label>
-            <select
-              id="ticket-mode-select"
-              className="input-control"
-              value={mode}
-              onChange={(e) =>
-                setMode(e.target.value as "scripted" | "live")
-              }
-            >
-              <option value="scripted">
-                Scripted Simulation ($0 token cost, deterministic git worktree
-                test)
-              </option>
-              <option value="live">
-                Live Single Provider ({activeProvider.toUpperCase()} via{" "}
-                {activeRuntime}, {effectiveDefaultModel}
-                {roleOverrideCount > 0
-                  ? `, +${roleOverrideCount} role overrides`
-                  : ""}
-                )
-              </option>
-            </select>
-          </div>
-        </div>
-        <footer>
-          <button type="button" className="btn" onClick={onClose}>
-            Cancel
-          </button>
-          <button
-            type="submit"
-            className="btn primary"
-            disabled={submitting}
-          >
-            {submitting ? "Dispatching..." : "Dispatch to Engineering Manager"}
-          </button>
-        </footer>
+          <Selector
+            label="Execution Runtime"
+            width="100%"
+            value={mode}
+            options={modeOptions}
+            onChange={(val) => setMode(val as "scripted" | "live")}
+          />
+        </VStack>
       </form>
     </ModalDialog>
   );

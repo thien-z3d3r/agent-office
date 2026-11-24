@@ -1,4 +1,5 @@
 import React from "react";
+import { Banner } from "@astryxdesign/core/Banner";
 import { useOfficeStore } from "../store/office-store.ts";
 
 export const ErrorBanner: React.FC = React.memo(() => {
@@ -13,51 +14,38 @@ export const ErrorBanner: React.FC = React.memo(() => {
   }
 
   return (
-    <div className="banner-stack">
+    <div className="hud-banner-stack">
       {!connected && (
-        <div className="hud-banner" role="status" aria-live="polite">
-          <span className="hud-banner-text">
-            <span className="pill error">Offline</span>
-            <span>
-              WebSocket disconnected. Reconnecting to local server at
-              127.0.0.1:4173...
-            </span>
-          </span>
-        </div>
+        <Banner
+          status="warning"
+          elevation="med"
+          title="Offline"
+          description="WebSocket disconnected. Reconnecting to local server at 127.0.0.1:4173..."
+        />
       )}
 
       {lastError && (
-        <div className="hud-banner" role="alert">
-          <span className="hud-banner-text">
-            <span className="pill error">Error</span>
-            <span>{lastError}</span>
-          </span>
-          <button
-            type="button"
-            className="btn btn-sm"
-            aria-label="Dismiss error"
-            onClick={clearError}
-          >
-            Dismiss
-          </button>
-        </div>
+        <Banner
+          status="error"
+          elevation="med"
+          title="Server Error"
+          description={lastError}
+          isDismissable
+          dismissLabel="Dismiss error"
+          onDismiss={clearError}
+        />
       )}
 
       {modelsError && (
-        <div className="hud-banner" role="alert">
-          <span className="hud-banner-text">
-            <span className="pill error">3D Asset Error</span>
-            <span>{modelsError}</span>
-          </span>
-          <button
-            type="button"
-            className="btn btn-sm"
-            aria-label="Dismiss 3D asset error"
-            onClick={() => setModelsError(null)}
-          >
-            Dismiss
-          </button>
-        </div>
+        <Banner
+          status="error"
+          elevation="med"
+          title="3D Asset Error"
+          description={modelsError}
+          isDismissable
+          dismissLabel="Dismiss 3D asset error"
+          onDismiss={() => setModelsError(null)}
+        />
       )}
     </div>
   );

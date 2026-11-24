@@ -11,6 +11,9 @@ export default defineConfig({
           if (normalized.includes("/node_modules/three/")) {
             return "three-vendor";
           }
+          if (normalized.includes("/node_modules/@astryxdesign/")) {
+            return "astryx-vendor";
+          }
           if (
             normalized.includes("/node_modules/react/") ||
             normalized.includes("/node_modules/react-dom/") ||

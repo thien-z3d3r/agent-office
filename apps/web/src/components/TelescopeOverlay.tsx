@@ -1,4 +1,8 @@
 import React, { useEffect, useRef } from "react";
+import { Button } from "@astryxdesign/core/Button";
+import { Icon } from "@astryxdesign/core/Icon";
+import { Kbd } from "@astryxdesign/core/Kbd";
+import { ArrowLeft } from "lucide-react";
 
 export interface TelescopeOverlayProps {
   onExit: () => void;
@@ -7,14 +11,15 @@ export interface TelescopeOverlayProps {
 export const TelescopeOverlay: React.FC<TelescopeOverlayProps> = ({
   onExit,
 }) => {
-  const exitBtnRef = useRef<HTMLButtonElement>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const opener =
       document.activeElement instanceof HTMLElement
         ? document.activeElement
         : null;
-    exitBtnRef.current?.focus({ preventScroll: true });
+    const btn = wrapRef.current?.querySelector("button");
+    btn?.focus({ preventScroll: true });
 
     return () => {
       if (
@@ -30,14 +35,18 @@ export const TelescopeOverlay: React.FC<TelescopeOverlayProps> = ({
   return (
     <div className="telescope-view">
       <div className="telescope-reticle" aria-hidden="true" />
-      <button
-        ref={exitBtnRef}
-        type="button"
-        className="btn telescope-exit"
-        onClick={onExit}
-      >
-        Exit Director Telescope (Esc)
-      </button>
+      <div ref={wrapRef} className="telescope-exit-wrap">
+        <Button
+          variant="secondary"
+          elevation="high"
+          icon={<Icon icon={ArrowLeft} />}
+          label="Exit Director Telescope (Esc)"
+          onClick={onExit}
+        >
+          <span>Exit Telescope</span>
+          <Kbd keys="Esc" />
+        </Button>
+      </div>
     </div>
   );
 };

@@ -1,74 +1,61 @@
-import React, { useRef, type RefObject } from "react";
-import { useModalFocusTrap } from "./useModalFocusTrap.ts";
+import React from "react";
+import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog";
 
 export interface ModalDialogProps {
   open: boolean;
-  titleId: string;
-  title: string;
-  closeLabel: string;
+  title: React.ReactNode;
+  subtitle?: React.ReactNode;
+  startContent?: React.ReactNode;
+  endContent?: React.ReactNode;
+  width?: number | string;
+  purpose?: "info" | "form" | "required";
   onClose: () => void;
-  initialFocusRef?: RefObject<HTMLElement | null>;
+  subheader?: React.ReactNode;
   footer?: React.ReactNode;
   children: React.ReactNode;
 }
 
 export const ModalDialog: React.FC<ModalDialogProps> = ({
   open,
-  titleId,
   title,
-  closeLabel,
+  subtitle,
+  startContent,
+  endContent,
+  width = 680,
+  purpose = "info",
   onClose,
-  initialFocusRef,
+  subheader,
   footer,
   children,
 }) => {
-  const modalRef = useRef<HTMLDivElement>(null);
-  const pointerDownOnBackdropRef = useRef(false);
-
-  useModalFocusTrap({
-    open,
-    modalRef,
-    initialFocusRef,
-    onClose,
-  });
-
-  if (!open) return null;
-
   return (
-    <div
-      className="backdrop"
-      onMouseDown={(e) => {
-        pointerDownOnBackdropRef.current = e.target === e.currentTarget;
+    <Dialog
+      isOpen={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) onClose();
       }}
-      onClick={(e) => {
-        const shouldClose =
-          pointerDownOnBackdropRef.current && e.target === e.currentTarget;
-        pointerDownOnBackdropRef.current = false;
-        if (shouldClose) onClose();
-      }}
+      width={width}
+      maxHeight="84dvh"
+      padding={0}
+      purpose={purpose}
     >
-      <div
-        ref={modalRef}
-        className="modal"
-        tabIndex={-1}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-      >
-        <header>
-          <h2 id={titleId}>{title}</h2>
-          <button
-            type="button"
-            className="btn btn-sm"
-            aria-label={closeLabel}
-            onClick={onClose}
-          >
-            Close
-          </button>
-        </header>
-        {children}
-        {footer && <footer>{footer}</footer>}
+      <div style={{ display: "flex", flexDirection: "column", minHeight: 0 }}>
+        <div style={{ padding: "var(--spacing-3) var(--spacing-4) 0" }}>
+          <DialogHeader
+            title={title}
+            subtitle={subtitle}
+            startContent={startContent}
+            endContent={endContent}
+            hasDivider={!subheader}
+            onOpenChange={(nextOpen) => {
+              if (!nextOpen) onClose();
+            }}
+          />
+        </div>
+        {subheader}
+        <div className="modal-body-scroll">{children}</div>
+        {footer && <footer className="modal-footer-bar">{footer}</footer>}
       </div>
-    </div>
+    </Dialog>
   );
 };

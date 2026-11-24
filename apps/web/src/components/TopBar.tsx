@@ -1,30 +1,15 @@
 import React from "react";
 import type { AgentRoleId } from "@agent-office/protocol";
+import { Badge } from "@astryxdesign/core/Badge";
+import { StatusDot } from "@astryxdesign/core/StatusDot";
+import { Boxes } from "lucide-react";
 import { useOfficeStore } from "../store/office-store.ts";
-import { PROVIDER_META_BY_ID } from "../store/provider-catalog.ts";
 import { HudDock, type HudDockProps } from "./HudDock.tsx";
 
 export type TopBarProps = HudDockProps;
 
 export const TopBar: React.FC<TopBarProps> = React.memo((props) => {
   const connected = useOfficeStore((s) => s.connected);
-  const activeProvider = useOfficeStore((s) => s.snapshot.activeProvider);
-  const activeRuntime = useOfficeStore((s) => s.snapshot.activeRuntime);
-  const activeModel = useOfficeStore((s) => s.snapshot.activeModel ?? null);
-  const catalogDefault = useOfficeStore(
-    (s) =>
-      s.modelCatalogByProvider[s.snapshot.activeProvider]?.defaultModel ?? null
-  );
-  const roleOverrideCount = useOfficeStore((s) => {
-    let count = 0;
-    const rm = s.snapshot.roleModels;
-    if (rm) {
-      for (const k in rm) {
-        if (rm[k as AgentRoleId]) count += 1;
-      }
-    }
-    return count;
-  });
   const rolesCount = useOfficeStore((s) => s.roles.length);
   const approvalsCount = useOfficeStore((s) => {
     let count = 0;
@@ -39,36 +24,33 @@ export const TopBar: React.FC<TopBarProps> = React.memo((props) => {
     return count;
   });
 
-  const effectiveDefaultModel =
-    activeModel ??
-    catalogDefault ??
-    PROVIDER_META_BY_ID[activeProvider].defaultModel;
-
   return (
-    <header className="topbar">
-      <div className="project panel">
-        <h1 className="project-name">
-          <span>Agent Office</span>
-          <span
-            className={`pill ${connected ? "done" : "error"}`}
-            title={
-              connected
-                ? "Connected to local event stream"
-                : "Disconnected from local server"
-            }
-          >
-            {connected ? "Live" : "Offline"}
-          </span>
-          {approvalsCount > 0 && (
-            <span className="svc-count">{approvalsCount} waiting</span>
-          )}
-        </h1>
-        <div className="project-meta">
-          Unified Provider: <strong>{activeProvider.toUpperCase()}</strong> (
-          {activeRuntime}) · Model: {effectiveDefaultModel}
-          {roleOverrideCount > 0 ? ` (+${roleOverrideCount} overrides)` : ""} ·
-          Active sub-agents: {activeWorkersCount}/{rolesCount}
-        </div>
+    <header className="hud-topbar">
+      <div className="hud-surface hud-brand">
+        <span className="hud-brand-mark" aria-hidden="true">
+          <Boxes size={15} strokeWidth={2.2} />
+        </span>
+
+        <h1 className="hud-brand-title">Agent Office</h1>
+
+        <StatusDot
+          variant={connected ? "success" : "error"}
+          label={connected ? "Connected to local event stream" : "Disconnected"}
+          isPulsing={connected}
+          tooltip={
+            connected
+              ? "Live connection to local Agent Office server"
+              : "Reconnecting to local server"
+          }
+        />
+
+        <span className="hud-brand-meta" title="Active sub-agents in office">
+          {activeWorkersCount}/{rolesCount} active
+        </span>
+
+        {approvalsCount > 0 && (
+          <Badge variant="error" label={`${approvalsCount} waiting`} />
+        )}
       </div>
 
       <HudDock {...props} />

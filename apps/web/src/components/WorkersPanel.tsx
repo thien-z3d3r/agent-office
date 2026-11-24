@@ -1,5 +1,7 @@
 import React, { useMemo } from "react";
 import type { AgentRoleId, RoleConfig } from "@agent-office/protocol";
+import { Banner } from "@astryxdesign/core/Banner";
+import { Button } from "@astryxdesign/core/Button";
 import { useOfficeStore } from "../store/office-store.ts";
 import { WorkerRow } from "./WorkerRow.tsx";
 
@@ -15,84 +17,76 @@ function sortRolesNeedingApprovalFirst(
 }
 
 export interface WorkersPanelProps {
-  onHide: () => void;
   onInspectRole: (roleId: AgentRoleId) => void;
 }
 
-export const WorkersPanel: React.FC<WorkersPanelProps> = React.memo(({
-  onHide,
-  onInspectRole,
-}) => {
-  const roles = useOfficeStore((s) => s.roles);
-  const selectedRoleId = useOfficeStore((s) => s.selectedRoleId);
-  const totalCostUsd = useOfficeStore((s) => s.snapshot.totalCostUsd);
-  const approvalsCount = useOfficeStore((s) => {
-    let count = 0;
-    for (const _ in s.snapshot.approvals) count += 1;
-    return count;
-  });
-  const firstWaitingAgentId = useOfficeStore((s) => {
-    for (const id in s.snapshot.approvals) {
-      return s.snapshot.approvals[id]?.agentId ?? null;
-    }
-    return null;
-  });
-  const waitingIdsKey = useOfficeStore((s) => {
-    let key = "";
-    for (const role of s.roles) {
-      if (s.snapshot.agents[role.id]?.status === "waiting_approval") {
-        key = key ? `${key},${role.id}` : role.id;
+export const WorkersPanel: React.FC<WorkersPanelProps> = React.memo(
+  ({ onInspectRole }) => {
+    const roles = useOfficeStore((s) => s.roles);
+    const selectedRoleId = useOfficeStore((s) => s.selectedRoleId);
+    const approvalsCount = useOfficeStore((s) => {
+      let count = 0;
+      for (const _ in s.snapshot.approvals) count += 1;
+      return count;
+    });
+    const firstWaitingAgentId = useOfficeStore((s) => {
+      for (const id in s.snapshot.approvals) {
+        return s.snapshot.approvals[id]?.agentId ?? null;
       }
-    }
-    return key;
-  });
+      return null;
+    });
+    const waitingIdsKey = useOfficeStore((s) => {
+      let key = "";
+      for (const role of s.roles) {
+        if (s.snapshot.agents[role.id]?.status === "waiting_approval") {
+          key = key ? `${key},${role.id}` : role.id;
+        }
+      }
+      return key;
+    });
 
-  const sortedRoles = useMemo(
-    () => sortRolesNeedingApprovalFirst(roles, waitingIdsKey),
-    [roles, waitingIdsKey]
-  );
+    const sortedRoles = useMemo(
+      () => sortRolesNeedingApprovalFirst(roles, waitingIdsKey),
+      [roles, waitingIdsKey]
+    );
 
-  return (
-    <section className="panel" aria-label="Workers in the office">
-      <h2>
-        <span>Workers</span>
-        <span className="count">({roles.length})</span>
-        <span className="cost">${totalCostUsd.toFixed(4)}</span>
-        <button
-          type="button"
-          className="panel-x"
-          aria-label="Hide Workers panel"
-          onClick={onHide}
-        >
-          <span aria-hidden="true">X</span>
-        </button>
-      </h2>
+    return (
+      <section
+        id="drawer-panel-workers"
+        role="tabpanel"
+        className="hud-drawer-scroll"
+        aria-label="Workers in the office"
+      >
+        {approvalsCount > 0 && firstWaitingAgentId && (
+          <div style={{ marginBottom: "var(--spacing-2)" }}>
+            <Banner
+              status="error"
+              title={`${approvalsCount} waiting on Director`}
+              endContent={
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  label="Inspect"
+                  onClick={() => onInspectRole(firstWaitingAgentId)}
+                />
+              }
+            />
+          </div>
+        )}
 
-      {approvalsCount > 0 && firstWaitingAgentId && (
-        <button
-          type="button"
-          className="waiting-alert"
-          onClick={() => onInspectRole(firstWaitingAgentId)}
-        >
-          <span>
-            {approvalsCount} worker waiting on Director approval
-          </span>
-          <span>Inspect</span>
-        </button>
-      )}
-
-      <ul className="worker-list">
-        {sortedRoles.map((role) => (
-          <WorkerRow
-            key={role.id}
-            role={role}
-            isSelected={role.id === selectedRoleId}
-            onInspect={onInspectRole}
-          />
-        ))}
-      </ul>
-    </section>
-  );
-});
+        <ul className="hud-list">
+          {sortedRoles.map((role) => (
+            <WorkerRow
+              key={role.id}
+              role={role}
+              isSelected={role.id === selectedRoleId}
+              onInspect={onInspectRole}
+            />
+          ))}
+        </ul>
+      </section>
+    );
+  }
+);
 
 WorkersPanel.displayName = "WorkersPanel";

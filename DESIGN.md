@@ -1,36 +1,31 @@
 # DESIGN.md: Agent Office Visual Direction
 
 ## Design Read
-Reading this as: interactive 3D spatial developer workspace for a self-hosted software engineer, in the AgentSystemLabs/agent-office tactile ink-and-paper cartoon style, dial ENERGY 3 / RHYTHM 2 / MOTION 2.
+Interactive 3D spatial developer workspace for a self-hosted software engineering studio, built with **Astryx (`@astryxdesign/core`)** and a custom **`agent-office`** theme (extending `@astryxdesign/theme-stone`) guided by `design-taste-frontend` restraint: crisp visual hierarchy, single-row spatial chrome, zero box-in-box clutter, real product UI, and unobstructed 3D stage presence.
 
-## Three Dials
-- **ENERGY: 3 (Bold):** Thick 3px ink borders (`#2b2d42`), hard offset block shadows (`0 4px 0 #2b2d42`), and a cel-shaded 3D world with `OutlineEffect` match the comic-book character of the 3D agents.
-- **RHYTHM: 2 (Balanced):** Full-viewport 3D canvas acts as the single focal stage, with asymmetric floating paper HUD overlays (top dock bar, right collapsible status stack, bottom-left activity stream, center modal windows).
-- **MOTION: 2 (Transitions & Character Acting):** 3D workers blend procedural stances (`type`, `edit`, `read`, `test`, `web`, `waiting`, `failing`, `up`) and button clicks physically depress by `2px` (`translateY(2px)`), all respecting `prefers-reduced-motion: reduce` and the HUD Reduced Motion toggle.
+## Design System & Theme Architecture
+- **Component System:** `@astryxdesign/core` (`Theme`, `Button`, `IconButton`, `Selector`, `SegmentedControl`, `DropdownMenu`, `TabList`, `Tab`, `Badge`, `Banner`, `Card`, `Dialog`, `DialogHeader`, `TextInput`, `TextArea`, `Switch`, `ProgressBar`, `Code`, `CodeBlock`, `Collapsible`, `EmptyState`, `StatusDot`, `Kbd`, `HStack`, `VStack`, `Text`, `Heading`, `Divider`).
+- **Custom Theme:** `apps/web/src/themes/agent-office/agentOfficeTheme.ts` compiled via `astryx theme build` into `agent-office.css` / `agent-office.js` and registered through `apps/web/src/astryx-themes.ts`.
+- **Cascade Layer Order:** `@layer reset, astryx-base, astryx-theme, app-hud;` in `apps/web/src/styles/office.css` guarantees Astryx base & theme styles compose cleanly with frosted spatial HUD positioning rules.
 
-## Color Palette (2 Core Neutrals + 1 Deliberate Accent + Semantic Status Tokens)
-- **Day Mode (Default):**
-  - `--paper: #fffaf3` (Primary panel background: warm cream paper that echoes the 3D corkboards and speech cards)
-  - `--paper-2: #fff1de` (Secondary surface & hover fill: separates modal headers/footers and hover states from base paper)
-  - `--ink: #2b2d42` (Structural border, shadow, and body copy color: provides >11:1 WCAG AAA contrast against `--paper` and matches the 3D `OutlineEffect` ink `[0.17, 0.18, 0.26]`)
-  - `--muted: #5c5346` (Secondary metadata copy: passes WCAG AA 4.5:1 contrast against both `--paper` and `--paper-2`)
-  - `--accent: #ff8a5b` with `--accent-ink: #2b2d42` (One deliberate accent used only on primary submission triggers, active focus outlines, and unread badge counts)
-- **Night Mode (Working Light/Dark Toggle):**
-  - `--paper: #1b1e2e` (Deep slate panel surface matching the 3D night sky)
-  - `--paper-2: #25293e` (Elevated night surface for headers and hover states)
-  - `--ink: #f4efe6` (Crisp warm bone text and border outline on dark surfaces, >11:1 contrast)
-  - `--muted: #b5b0a6` (Secondary metadata copy on dark surfaces, >4.5:1 contrast)
-  - `--accent: #ff9b70` with `--accent-ink: #1b1e2e`
-- **Semantic Status Colors (Real Agent States Only):**
-  - `--good: #06d6a0` (Ticket done / tests passing)
-  - `--warn: #ffd166` (Agent actively working / command executing)
-  - `--bad: #ef476f` (Agent waiting on Director approval or escalated error)
-  - `--info: #8ecae6` (Agent idle or starting)
+## Color Palette (Semantic Astryx Tokens, Day & Night Modes)
+- **Day Mode (`light`):**
+  - `--color-background-body: #f4efe7` / `--color-background-surface: #fcf9f4` / `--color-background-card: #ffffff` (Warm sunlit parchment surfaces that pair naturally with the cel-shaded maple office floor and corkboards)
+  - `--color-text-primary: #1e2133` / `--color-text-secondary: #585a6b` (>11:1 AAA primary contrast and >4.5:1 AA supporting contrast)
+  - `--color-accent: #d6552a` with `--color-on-accent: #ffffff` (Terracotta coral accent reserved for the single primary Dispatch CTA, active selections, and key interactive emphasis)
+  - `--color-border: rgba(30, 33, 51, 0.12)` (Restrained 1px hairline separation replacing heavy 3px cartoon borders)
+- **Night Mode (`dark`):**
+  - `--color-background-body: #111420` / `--color-background-surface: #171b2a` / `--color-background-card: #1d2236` (Deep twilight indigo-slate matching the 3D night sky)
+  - `--color-text-primary: #f3efe8` / `--color-text-secondary: #a9aec2`
+  - `--color-accent: #ff8a5b` with `--color-on-accent: #171a26`
+- **Semantic Status Hierarchy:**
+  - Quiet text for default/completed states (`idle`, `done`) so healthy rows never flood the screen with competing badges.
+  - Accent/orange `Badge` for active running work (`writing`, `testing`, `standup`).
+  - High-visibility error `Badge` + floating `ApprovalDock` strictly for items needing Director attention (`waiting_approval`, `error`).
 
-## One-Line Reasons for Every Major Visual Decision (R-31)
-- **Why this color palette:** Warm cream paper (`#fffaf3`) and deep navy ink (`#2b2d42`) bridge the 2D HUD panels directly to the 3-step cel-shaded 3D toon materials and `OutlineEffect` ink lines in the 3D office.
-- **Why this layout:** The 3D office is the product's primary workspace, so it fills `100vw x 100vh` while HUD panels float at the perimeter with `pointer-events: none` passthrough and individual collapse controls (`X`) so the room is never trapped inside a small dashboard column.
-- **Why this typography:** Rounded humanist sans-serif (`Nunito, ui-rounded, 'SF Pro Rounded', system-ui, sans-serif` at weights 700-900) matches the chunky cartoon geometry of the 3D workers and 3D canvas speech sprites, while `ui-monospace` is reserved strictly for real terminal outputs, branch names, and git diffs.
-- **Why this spacing and border radius:** Panels use `16px` radius with `3px solid` ink borders, buttons use `12px` radius, and status pills use `999px` radius so inputs, buttons, panels, and status chips are visually distinct by shape (`R-11`).
-- **Why hard offset shadows instead of soft blur:** Hard `0 4px 0` ink shadows give panels and buttons physical comic-book thickness without blurred glassmorphism or floating softness (`R-10`, `R-12`).
-- **Why inline SVG icons instead of emoji or generic AI sparkles:** Custom 2px-stroke geometric SVGs (terminal, git branch, gavel approval, sun/moon, telescope, dog paw, plus) communicate exact developer actions without decorative emoji noise (`R-04`).
+## Spatial Layout & UX Decisions
+- **Single-Row Floating Command Bar:** Consolidates the brand status pill, Provider `Selector`, active Model shortcut, 3-way Camera `SegmentedControl` (`Office` / `Standup` / `Loft`), single primary `Dispatch` CTA, `Demos` `DropdownMenu`, Settings, Day/Night toggle, and Drawer toggle into one clean 44px floating row that never wraps over the 3D wall boards.
+- **Unified Collapsible Workspace Drawer:** Replaces three cramped stacked boxes (`Workers`, `Task Table`, `Spend & Performance`) with one full-height frosted Astryx drawer featuring `TabList` (`Workers` / `Tasks`) so all 8 workers or task rows remain scannable at once, anchored by a compact spend + motion/GPU footer (`ProgressBar` + `Switch` controls).
+- **Collapsible Activity Ticker:** Bottom-left floating surface defaults to the latest 2 events and expands cleanly on demand so lower-left desks stay visible.
+- **Syntax-Highlighted Agent Inspector:** Role switcher `TabList` directly beneath the `DialogHeader`, structured 4-cell metadata grid with tabular numerals, curated tool chips, and Astryx `CodeBlock` with copy buttons and unified diff highlighting (`isDiff`) for terminal stream and git worktree diffs.
+- **Typography & Icons:** Figtree + Montserrat + JetBrains Mono bundled via `@astryxdesign/theme-stone/fonts.css`, paired with clean geometric `lucide-react` icons through Astryx `<Icon />`.

@@ -1,5 +1,10 @@
 import React, { useMemo } from "react";
 import type { AgentRoleId } from "@agent-office/protocol";
+import { Badge } from "@astryxdesign/core/Badge";
+import { Button } from "@astryxdesign/core/Button";
+import { EmptyState } from "@astryxdesign/core/EmptyState";
+import { Icon } from "@astryxdesign/core/Icon";
+import { ListChecks, Plus } from "lucide-react";
 import { useOfficeStore } from "../store/office-store.ts";
 import {
   PROVIDER_META_BY_ID,
@@ -7,139 +12,132 @@ import {
 } from "../store/provider-catalog.ts";
 
 export interface TaskTablePanelProps {
-  onHide: () => void;
   onOpenDispatch: () => void;
   onInspectRole: (roleId: AgentRoleId) => void;
 }
 
-export const TaskTablePanel: React.FC<TaskTablePanelProps> = React.memo(({
-  onHide,
-  onOpenDispatch,
-  onInspectRole,
-}) => {
-  const activeProvider = useOfficeStore((s) => s.snapshot.activeProvider);
-  const activeRuntime = useOfficeStore((s) => s.snapshot.activeRuntime);
-  const activeModel = useOfficeStore((s) => s.snapshot.activeModel ?? null);
-  const roleModels = useOfficeStore((s) => s.snapshot.roleModels);
-  const catalogDefault = useOfficeStore(
-    (s) =>
-      s.modelCatalogByProvider[s.snapshot.activeProvider]?.defaultModel ?? null
-  );
-  const taskTable = useOfficeStore((s) => s.snapshot.taskTable);
-  const selectedRoleId = useOfficeStore((s) => s.selectedRoleId);
-  const setSelectedTicket = useOfficeStore((s) => s.setSelectedTicket);
+export const TaskTablePanel: React.FC<TaskTablePanelProps> = React.memo(
+  ({ onOpenDispatch, onInspectRole }) => {
+    const activeProvider = useOfficeStore((s) => s.snapshot.activeProvider);
+    const activeRuntime = useOfficeStore((s) => s.snapshot.activeRuntime);
+    const activeModel = useOfficeStore((s) => s.snapshot.activeModel ?? null);
+    const roleModels = useOfficeStore((s) => s.snapshot.roleModels);
+    const catalogDefault = useOfficeStore(
+      (s) =>
+        s.modelCatalogByProvider[s.snapshot.activeProvider]?.defaultModel ??
+        null
+    );
+    const taskTable = useOfficeStore((s) => s.snapshot.taskTable);
+    const selectedRoleId = useOfficeStore((s) => s.selectedRoleId);
+    const setSelectedTicket = useOfficeStore((s) => s.setSelectedTicket);
 
-  const taskTableRows = useMemo(
-    () => Object.values(taskTable).sort((a, b) => a.order - b.order),
-    [taskTable]
-  );
+    const taskTableRows = useMemo(
+      () => Object.values(taskTable).sort((a, b) => a.order - b.order),
+      [taskTable]
+    );
 
-  const effectiveDefaultModel =
-    activeModel ??
-    catalogDefault ??
-    PROVIDER_META_BY_ID[activeProvider].defaultModel;
+    const effectiveDefaultModel =
+      activeModel ??
+      catalogDefault ??
+      PROVIDER_META_BY_ID[activeProvider].defaultModel;
 
-  return (
-    <section
-      className="panel"
-      aria-label="Task table and sub-agent spawner"
-    >
-      <h2>
-        <span>Task Table (Sub-Agents)</span>
-        <span className="count">({taskTableRows.length})</span>
-        <button
-          type="button"
-          className="panel-x panel-x-end"
-          aria-label="Hide Task Table panel"
-          onClick={onHide}
-        >
-          <span aria-hidden="true">X</span>
-        </button>
-      </h2>
-
-      <div className="panel-hint">
-        Unified Provider:{" "}
-        <span className="code-chip">
-          {activeProvider} ({activeRuntime})
-        </span>{" "}
-        · Model: <span className="code-chip">{effectiveDefaultModel}</span>{" "}
-        spawns role sub-agents row by row
-      </div>
-
-      {taskTableRows.length === 0 ? (
-        <div className="empty-state" role="status">
-          <span className="pill idle">Empty</span>
-          <p>
-            Task Table is empty. Dispatch a task or trigger a demo workflow so{" "}
-            <strong>{activeProvider.toUpperCase()}</strong> spawns role
-            sub-agents through the table.
-          </p>
-          <button
-            type="button"
-            className="btn btn-sm primary"
-            onClick={onOpenDispatch}
-          >
-            Dispatch First Task
-          </button>
+    return (
+      <section
+        id="drawer-panel-tasks"
+        role="tabpanel"
+        className="hud-drawer-body"
+        aria-label="Task table and sub-agent spawner"
+      >
+        <div className="hud-task-context">
+          <span>
+            {PROVIDER_META_BY_ID[activeProvider].shortLabel} ({activeRuntime})
+          </span>
+          <span className="hud-mono-tag">{effectiveDefaultModel}</span>
         </div>
-      ) : (
-        <ul className="ticket-list">
-          {taskTableRows.map((row) => {
-            const isSelected = selectedRoleId === row.role;
-            const rowModel =
-              row.model ??
-              resolveModelForRole({
-                provider: row.provider,
-                roleId: row.role,
-                activeModel,
-                roleModels,
-                catalogDefault,
-              });
-            return (
-              <li key={row.id}>
-                <button
-                  type="button"
-                  className={`ticket-row ${isSelected ? "selected" : ""}`}
-                  aria-current={isSelected ? "true" : undefined}
-                  onClick={() => {
-                    setSelectedTicket(row.ticketId);
-                    onInspectRole(row.role);
-                  }}
-                >
-                  <span className="worker-main">
-                    <span className="worker-title">
-                      #{row.order} [{row.role.toUpperCase()}] · {row.title}
-                    </span>
-                    <span className="worker-model-row">
-                      <span className="code-chip worker-model-chip">
-                        {rowModel}
+
+        <div className="hud-drawer-scroll">
+          {taskTableRows.length === 0 ? (
+            <EmptyState
+              isCompact
+              icon={<Icon icon={ListChecks} size="lg" />}
+              title="No active sub-agent tasks"
+              description={`Dispatch a ticket or run a demo workflow so ${PROVIDER_META_BY_ID[activeProvider].shortLabel} spawns role sub-agents.`}
+              actions={
+                <Button
+                  size="sm"
+                  variant="primary"
+                  icon={<Icon icon={Plus} />}
+                  label="Dispatch First Task"
+                  onClick={onOpenDispatch}
+                />
+              }
+            />
+          ) : (
+            <ul className="hud-list">
+              {taskTableRows.map((row) => {
+                const isSelected = selectedRoleId === row.role;
+                const rowModel =
+                  row.model ??
+                  resolveModelForRole({
+                    provider: row.provider,
+                    roleId: row.role,
+                    activeModel,
+                    roleModels,
+                    catalogDefault,
+                  });
+
+                return (
+                  <li key={row.id}>
+                    <button
+                      type="button"
+                      className="hud-list-row"
+                      data-selected={isSelected ? "true" : undefined}
+                      aria-current={isSelected ? "true" : undefined}
+                      onClick={() => {
+                        setSelectedTicket(row.ticketId);
+                        onInspectRole(row.role);
+                      }}
+                    >
+                      <span className="hud-row-main">
+                        <span className="hud-row-head">
+                          <span className="hud-row-title" title={row.title}>
+                            #{row.order} [{row.role.toUpperCase()}] {row.title}
+                          </span>
+                          <span className="hud-row-status">
+                            {row.status === "failed" ? (
+                              <Badge variant="error" label="Failed" />
+                            ) : row.status === "running" ? (
+                              <Badge variant="orange" label="Running" />
+                            ) : (
+                              <span
+                                className="hud-status-quiet"
+                                data-state={
+                                  row.status === "done" ? "done" : undefined
+                                }
+                              >
+                                {row.status}
+                              </span>
+                            )}
+                          </span>
+                        </span>
+
+                        <span className="hud-row-meta">
+                          <span className="hud-mono-tag">{rowModel}</span>
+                          <span className="hud-row-sub">
+                            {row.artifactOrCmd}
+                          </span>
+                        </span>
                       </span>
-                    </span>
-                    <span className="worker-sub">
-                      Sub-Agent: {row.subAgentId} · Target: {row.artifactOrCmd}
-                    </span>
-                  </span>
-                  <span
-                    className={`pill ${
-                      row.status === "done"
-                        ? "done"
-                        : row.status === "failed"
-                          ? "error"
-                          : row.status === "running"
-                            ? "writing"
-                            : "idle"
-                    }`}
-                  >
-                    {row.status}
-                  </span>
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </section>
-  );
-});
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      </section>
+    );
+  }
+);
 
 TaskTablePanel.displayName = "TaskTablePanel";

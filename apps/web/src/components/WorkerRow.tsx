@@ -1,5 +1,6 @@
 import React from "react";
 import type { AgentRoleId, RoleConfig } from "@agent-office/protocol";
+import { Badge } from "@astryxdesign/core/Badge";
 import { useOfficeStore } from "../store/office-store.ts";
 import { resolveModelForRole } from "../store/provider-catalog.ts";
 
@@ -8,6 +9,16 @@ export interface WorkerRowProps {
   isSelected: boolean;
   onInspect: (roleId: AgentRoleId) => void;
 }
+
+const ACTIVE_WORK_STATES = new Set([
+  "thinking",
+  "writing",
+  "reading",
+  "testing",
+  "web",
+  "standup",
+  "handoff",
+]);
 
 export const WorkerRow: React.FC<WorkerRowProps> = React.memo(
   ({ role, isSelected, onInspect }) => {
@@ -18,7 +29,8 @@ export const WorkerRow: React.FC<WorkerRowProps> = React.memo(
     );
     const catalogDefault = useOfficeStore(
       (s) =>
-        s.modelCatalogByProvider[s.snapshot.activeProvider]?.defaultModel ?? null
+        s.modelCatalogByProvider[s.snapshot.activeProvider]?.defaultModel ??
+        null
     );
     const status = useOfficeStore(
       (s) => s.snapshot.agents[role.id]?.status ?? "idle"
@@ -38,40 +50,58 @@ export const WorkerRow: React.FC<WorkerRowProps> = React.memo(
       catalogDefault,
     });
     const isWaiting = status === "waiting_approval";
+    const isError = status === "error";
+    const isWorking = ACTIVE_WORK_STATES.has(status);
 
     return (
       <li>
         <button
           type="button"
-          className={`worker-row ${isSelected ? "selected" : ""} ${
-            isWaiting ? "needs-you" : ""
-          }`}
+          className="hud-list-row"
+          data-selected={isSelected ? "true" : undefined}
+          data-attention={isWaiting || isError ? "true" : undefined}
           aria-current={isSelected ? "true" : undefined}
           onClick={() => onInspect(role.id)}
         >
           <span
-            className="dot"
+            className="hud-role-dot"
             style={{ background: role.tint }}
             aria-hidden="true"
           />
-          <span className="worker-main">
-            <span className="worker-title">
-              {role.id.toUpperCase()} · {role.title}
-            </span>
-            <span className="worker-model-row">
-              <span className="code-chip worker-model-chip">
-                {resolvedModel}
+
+          <span className="hud-row-main">
+            <span className="hud-row-head">
+              <span className="hud-row-title">
+                {role.id.toUpperCase()} · {role.title}
               </span>
-              {roleModel && (
-                <span className="worker-model-tag">role override</span>
-              )}
+
+              <span className="hud-row-status">
+                {isWaiting ? (
+                  <Badge variant="error" label="Needs you" />
+                ) : isError ? (
+                  <Badge variant="error" label="Error" />
+                ) : isWorking ? (
+                  <Badge variant="orange" label={status} />
+                ) : (
+                  <span
+                    className="hud-status-quiet"
+                    data-state={status === "done" ? "done" : undefined}
+                  >
+                    {status}
+                  </span>
+                )}
+              </span>
             </span>
-            <span className="worker-sub">
-              {subAgentId ?? `sub-${activeProvider}-${role.id}`} · {detail}
+
+            <span className="hud-row-meta">
+              <span className="hud-mono-tag">{resolvedModel}</span>
+              {roleModel && <span>override</span>}
             </span>
-          </span>
-          <span className={`pill ${status}`}>
-            {isWaiting ? "NEEDS YOU" : status}
+
+            <span className="hud-row-sub" title={detail}>
+              {subAgentId ? `${subAgentId} · ` : ""}
+              {detail}
+            </span>
           </span>
         </button>
       </li>

@@ -1,5 +1,22 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import type { ProviderId, RuntimeKind } from "@agent-office/protocol";
+import { Badge } from "@astryxdesign/core/Badge";
+import { Banner } from "@astryxdesign/core/Banner";
+import { Button } from "@astryxdesign/core/Button";
+import { Card } from "@astryxdesign/core/Card";
+import { Code } from "@astryxdesign/core/Code";
+import { Collapsible } from "@astryxdesign/core/Collapsible";
+import { Divider } from "@astryxdesign/core/Divider";
+import { Heading } from "@astryxdesign/core/Heading";
+import { HStack } from "@astryxdesign/core/HStack";
+import { Icon } from "@astryxdesign/core/Icon";
+import { Selector } from "@astryxdesign/core/Selector";
+import { StackItem } from "@astryxdesign/core/Stack";
+import { TabList, Tab } from "@astryxdesign/core/TabList";
+import { Text } from "@astryxdesign/core/Text";
+import { TextInput } from "@astryxdesign/core/TextInput";
+import { VStack } from "@astryxdesign/core/VStack";
+import { Cpu, KeyRound, RefreshCw } from "lucide-react";
 import { useOfficeStore } from "../store/office-store.ts";
 import {
   PROVIDER_CATALOG,
@@ -15,8 +32,6 @@ const JCODE_PROVIDERS = PROVIDER_CATALOG.map((p) => p.jcodeAuthKey);
 const API_KEY_PROVIDERS = PROVIDER_CATALOG.filter(
   (p) => p.authMode === "api-key" && p.secretKey
 );
-
-const TAB_ORDER: readonly SettingsTab[] = ["credentials", "models"];
 
 export interface ProvidersModalProps {
   open: boolean;
@@ -60,11 +75,6 @@ const ProvidersModalContent: React.FC<{ onClose: () => void }> = ({
   const [feedbackError, setFeedbackError] = useState<string | null>(null);
   const [errorKey, setErrorKey] = useState<string | null>(null);
   const [feedbackSuccess, setFeedbackSuccess] = useState<string | null>(null);
-
-  const inputRefs = useRef<Record<string, HTMLInputElement | null>>({});
-  const tabRefs = useRef<Partial<Record<SettingsTab, HTMLButtonElement | null>>>(
-    {}
-  );
 
   const clearFeedback = useCallback(() => {
     setFeedbackError(null);
@@ -129,39 +139,31 @@ const ProvidersModalContent: React.FC<{ onClose: () => void }> = ({
         ? "Ready via jcode OAuth"
         : "Setup Required"
       : isActiveKeySet
-        ? "Ready (Encrypted API Key)"
+        ? "Ready (Encrypted Key)"
         : activeRuntime === "jcode" && activeJcodeInfo?.status === "available"
           ? "Ready via jcode CLI"
           : "Setup Required";
 
-  const runtimeOptions: RuntimeKind[] = activeMeta.compatibleRuntimes.includes(
-    activeRuntime
-  )
-    ? [...activeMeta.compatibleRuntimes]
-    : [...activeMeta.compatibleRuntimes, activeRuntime];
+  const providerOptions = useMemo(
+    () =>
+      PROVIDER_CATALOG.map((opt) => ({
+        value: opt.id,
+        label: opt.label,
+      })),
+    []
+  );
 
-  const handleTabKeyDown = (
-    e: React.KeyboardEvent<HTMLButtonElement>,
-    index: number
-  ) => {
-    let nextIndex = index;
-    if (e.key === "ArrowRight") {
-      nextIndex = (index + 1) % TAB_ORDER.length;
-    } else if (e.key === "ArrowLeft") {
-      nextIndex = (index - 1 + TAB_ORDER.length) % TAB_ORDER.length;
-    } else if (e.key === "Home") {
-      nextIndex = 0;
-    } else if (e.key === "End") {
-      nextIndex = TAB_ORDER.length - 1;
-    } else {
-      return;
-    }
-    e.preventDefault();
-    const nextTab = TAB_ORDER[nextIndex];
-    if (!nextTab) return;
-    setSettingsTab(nextTab);
-    tabRefs.current[nextTab]?.focus();
-  };
+  const runtimeOptions = useMemo(() => {
+    const list: RuntimeKind[] = activeMeta.compatibleRuntimes.includes(
+      activeRuntime
+    )
+      ? [...activeMeta.compatibleRuntimes]
+      : [...activeMeta.compatibleRuntimes, activeRuntime];
+    return list.map((rt) => ({
+      value: rt,
+      label: RUNTIME_LABELS[rt],
+    }));
+  }, [activeMeta.compatibleRuntimes, activeRuntime]);
 
   const handleRefreshSettings = async () => {
     setRefreshing(true);
@@ -204,7 +206,9 @@ const ProvidersModalContent: React.FC<{ onClose: () => void }> = ({
       setFeedbackError(apiError);
       return;
     }
-    setFeedbackSuccess(`Execution runtime set to ${RUNTIME_LABELS[nextRuntime]}.`);
+    setFeedbackSuccess(
+      `Execution runtime set to ${RUNTIME_LABELS[nextRuntime]}.`
+    );
   };
 
   const handleSaveSecret = async (keyName: string) => {
@@ -213,7 +217,6 @@ const ProvidersModalContent: React.FC<{ onClose: () => void }> = ({
       setFeedbackSuccess(null);
       setErrorKey(keyName);
       setFeedbackError(`Enter an API key for ${keyName} before saving.`);
-      inputRefs.current[keyName]?.focus();
       return;
     }
 
@@ -244,79 +247,62 @@ const ProvidersModalContent: React.FC<{ onClose: () => void }> = ({
     (item) => item.secretKey !== activeMeta.secretKey
   );
 
+  const tabBar = (
+    <div style={{ padding: "var(--spacing-2) var(--spacing-4) 0" }}>
+      <TabList
+        role="tablist"
+        size="sm"
+        hasDivider
+        value={settingsTab}
+        onChange={(val) => {
+          clearFeedback();
+          setSettingsTab(val as SettingsTab);
+        }}
+      >
+        <Tab
+          value="credentials"
+          panelId="providers-tabpanel-credentials"
+          label="Credentials & Runtime"
+          icon={<Icon icon={KeyRound} size="xsm" />}
+        />
+        <Tab
+          value="models"
+          panelId="providers-tabpanel-models"
+          label="Model Catalog"
+          icon={<Icon icon={Cpu} size="xsm" />}
+        />
+      </TabList>
+    </div>
+  );
+
   return (
     <ModalDialog
       open
-      titleId="settings-modal-title"
+      width={720}
       title="Providers, Models & Credentials"
-      closeLabel="Close Providers & Models Settings modal"
+      subtitle="Manage the single active provider, local jcode OAuth, and per-role model overrides"
+      subheader={tabBar}
       onClose={onClose}
-      footer={
-        <button type="button" className="btn" onClick={onClose}>
-          Done
-        </button>
-      }
+      footer={<Button variant="secondary" label="Done" onClick={onClose} />}
     >
-      <div
-        className="modal-tabs"
-        role="tablist"
-        aria-label="Provider and model settings"
-      >
-        <button
-          ref={(el) => {
-            tabRefs.current.credentials = el;
-          }}
-          id="providers-tab-credentials"
-          type="button"
-          role="tab"
-          aria-selected={settingsTab === "credentials"}
-          aria-controls="providers-tabpanel-credentials"
-          tabIndex={settingsTab === "credentials" ? 0 : -1}
-          className={`btn btn-sm ${
-            settingsTab === "credentials" ? "primary" : ""
-          }`}
-          onClick={() => {
-            clearFeedback();
-            setSettingsTab("credentials");
-          }}
-          onKeyDown={(e) => handleTabKeyDown(e, 0)}
-        >
-          Credentials &amp; Runtime
-        </button>
-        <button
-          ref={(el) => {
-            tabRefs.current.models = el;
-          }}
-          id="providers-tab-models"
-          type="button"
-          role="tab"
-          aria-selected={settingsTab === "models"}
-          aria-controls="providers-tabpanel-models"
-          tabIndex={settingsTab === "models" ? 0 : -1}
-          className={`btn btn-sm ${settingsTab === "models" ? "primary" : ""}`}
-          onClick={() => {
-            clearFeedback();
-            setSettingsTab("models");
-          }}
-          onKeyDown={(e) => handleTabKeyDown(e, 1)}
-        >
-          Model Catalog
-        </button>
-      </div>
-
-      <div className="body">
-        {feedbackError && (
-          <div id="providers-secret-error" className="inline-alert" role="alert">
-            <span className="pill error">Error</span>
-            <span>{feedbackError}</span>
-          </div>
+      <VStack gap={4}>
+        {feedbackError && !errorKey && (
+          <Banner
+            status="error"
+            title="Configuration error"
+            description={feedbackError}
+            isDismissable
+            onDismiss={clearFeedback}
+          />
         )}
 
         {feedbackSuccess && (
-          <div className="inline-status" role="status">
-            <span className="pill done">Saved</span>
-            <span>{feedbackSuccess}</span>
-          </div>
+          <Banner
+            status="success"
+            title={feedbackSuccess}
+            isDismissable
+            onDismiss={clearFeedback}
+          />
         )}
 
         {settingsTab === "models" ? (
@@ -326,289 +312,285 @@ const ProvidersModalContent: React.FC<{ onClose: () => void }> = ({
             clearFeedback={clearFeedback}
           />
         ) : (
-          <div
-            id="providers-tabpanel-credentials"
-            role="tabpanel"
-            aria-labelledby="providers-tab-credentials"
-            className="modal-tabpanel"
-          >
-            <div className="field-grid-2">
-              <div className="field-group">
-                <label htmlFor="modal-active-provider">Active Provider</label>
-                <select
-                  id="modal-active-provider"
-                  className="input-control"
+          <div id="providers-tabpanel-credentials" role="tabpanel">
+            <VStack gap={4}>
+              <div className="modal-grid-2">
+                <Selector
+                  label="Active Provider"
+                  width="100%"
                   value={activeProvider}
-                  disabled={switchingProvider}
-                  onChange={(e) =>
-                    void handleProviderChange(e.target.value as ProviderId)
-                  }
-                >
-                  {PROVIDER_CATALOG.map((opt) => (
-                    <option key={opt.id} value={opt.id}>
-                      {opt.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
+                  isDisabled={switchingProvider}
+                  options={providerOptions}
+                  onChange={(val) => void handleProviderChange(val as ProviderId)}
+                />
 
-              <div className="field-group">
-                <label htmlFor="modal-active-runtime">Execution Runtime</label>
-                <select
-                  id="modal-active-runtime"
-                  className="input-control"
+                <Selector
+                  label="Execution Runtime"
+                  width="100%"
                   value={activeRuntime}
-                  disabled={switchingProvider}
-                  onChange={(e) =>
-                    void handleRuntimeChange(e.target.value as RuntimeKind)
+                  isDisabled={switchingProvider}
+                  description={
+                    activeMeta.compatibleRuntimes.length === 1
+                      ? "OAuth providers require local jcode runtime."
+                      : undefined
                   }
-                >
-                  {runtimeOptions.map((rt) => (
-                    <option key={rt} value={rt}>
-                      {RUNTIME_LABELS[rt]}
-                    </option>
-                  ))}
-                </select>
-                {activeMeta.compatibleRuntimes.length === 1 && (
-                  <div className="field-hint">
-                    OAuth providers require local jcode runtime.
-                  </div>
-                )}
+                  options={runtimeOptions}
+                  onChange={(val) => void handleRuntimeChange(val as RuntimeKind)}
+                />
               </div>
-            </div>
 
-            <div className="inline-status credentials-model-summary">
-              <span className="pill idle">Models</span>
-              <span className="credentials-model-text">
-                Default model:{" "}
-                <span className="code-chip">{effectiveDefaultModel}</span>
-                {roleOverrideCount > 0
-                  ? ` (+${roleOverrideCount} role override${
-                      roleOverrideCount === 1 ? "" : "s"
-                    })`
-                  : ""}
-              </span>
-              <button
-                type="button"
-                className="btn btn-sm"
-                onClick={() => {
-                  clearFeedback();
-                  setSettingsTab("models");
-                }}
-              >
-                Configure in Model Catalog
-              </button>
-            </div>
+              <Card variant="muted" padding={3}>
+                <HStack gap={3} vAlign="center" hAlign="between" wrap="wrap">
+                  <HStack gap={2} vAlign="center" wrap="wrap">
+                    <Text type="supporting" weight="semibold">
+                      Default model
+                    </Text>
+                    <Code>{effectiveDefaultModel}</Code>
+                    {roleOverrideCount > 0 && (
+                      <Badge
+                        variant="orange"
+                        label={`+${roleOverrideCount} role override${
+                          roleOverrideCount === 1 ? "" : "s"
+                        }`}
+                      />
+                    )}
+                  </HStack>
 
-            {loadingSettings && (
-              <div className="inline-status" role="status">
-                <span className="pill idle">Checking</span>
-                <span>
-                  Checking provider credentials and jcode OAuth status...
-                </span>
-              </div>
-            )}
-
-        <section
-          className={`panel active-provider-card ${isReady ? "is-ready" : "needs-setup"}`}
-          aria-labelledby="active-provider-card-title"
-        >
-          <div className="active-provider-header">
-            <div className="active-provider-title-group">
-              <h3 id="active-provider-card-title">{activeMeta.shortLabel}</h3>
-              <span className={`pill ${isReady ? "done" : "error"}`}>
-                {readyLabel}
-              </span>
-            </div>
-            <button
-              type="button"
-              className="btn btn-sm"
-              disabled={refreshing}
-              onClick={() => void handleRefreshSettings()}
-            >
-              {refreshing ? "Refreshing..." : "Refresh Status"}
-            </button>
-          </div>
-
-          <div className="field-hint">{activeMeta.hint}</div>
-
-          {activeMeta.authMode === "jcode-oauth" ? (
-            <>
-              <div className="jcode-status-row">
-                <span>jcode OAuth ({activeMeta.jcodeAuthKey})</span>
-                <span className={`pill ${isReady ? "done" : "error"}`}>
-                  {activeJcodeInfo
-                    ? `${activeJcodeInfo.status} (${activeJcodeInfo.authKind})`
-                    : "jcode CLI status unavailable"}
-                </span>
-              </div>
-              {!isReady && (
-                <div className="field-hint">
-                  Run <code className="code-chip">jcode auth login</code> in
-                  your terminal, then click Refresh Status.
-                </div>
-              )}
-            </>
-          ) : activeMeta.secretKey ? (
-            <>
-              <div className="field-group">
-                <div className="secret-label-row">
-                  <label htmlFor={`active-secret-${activeMeta.secretKey}`}>
-                    {activeMeta.secretLabel}
-                  </label>
-                  <span className={`pill ${isActiveKeySet ? "done" : "idle"}`}>
-                    {isActiveKeySet ? "Encrypted in SQLite" : "Not configured"}
-                  </span>
-                </div>
-                <div className="secret-input-row">
-                  <input
-                    ref={(el) => {
-                      if (activeMeta.secretKey) {
-                        inputRefs.current[activeMeta.secretKey] = el;
-                      }
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    label="Configure in Model Catalog"
+                    onClick={() => {
+                      clearFeedback();
+                      setSettingsTab("models");
                     }}
-                    id={`active-secret-${activeMeta.secretKey}`}
-                    type="password"
-                    className="input-control"
-                    value={keyDrafts[activeMeta.secretKey] ?? ""}
-                    aria-invalid={
-                      Boolean(feedbackError && errorKey === activeMeta.secretKey)
-                        ? "true"
-                        : undefined
-                    }
-                    aria-describedby={
-                      Boolean(feedbackError && errorKey === activeMeta.secretKey)
-                        ? "providers-secret-error"
-                        : undefined
-                    }
-                    onChange={(e) => {
-                      const secretKey = activeMeta.secretKey!;
-                      const nextVal = e.target.value;
-                      setKeyDrafts((prev) => ({
-                        ...prev,
-                        [secretKey]: nextVal,
-                      }));
-                      if (errorKey === secretKey && feedbackError) {
-                        setFeedbackError(null);
-                        setErrorKey(null);
-                      }
-                    }}
-                    placeholder="Paste API key (stored AES-256-GCM encrypted)..."
                   />
-                  <button
-                    type="button"
-                    className="btn primary"
-                    disabled={savingKey === activeMeta.secretKey}
-                    onClick={() => void handleSaveSecret(activeMeta.secretKey!)}
-                  >
-                    {savingKey === activeMeta.secretKey
-                      ? "Saving..."
-                      : "Save Key"}
-                  </button>
-                </div>
-              </div>
-              {activeRuntime === "jcode" && (
-                <div className="jcode-status-row">
-                  <span>jcode CLI ({activeMeta.jcodeAuthKey})</span>
-                  <span
-                    className={`pill ${
-                      activeJcodeInfo?.status === "available" ? "done" : "idle"
-                    }`}
-                  >
-                    {activeJcodeInfo
-                      ? `${activeJcodeInfo.status} (${activeJcodeInfo.authKind})`
-                      : "not probed"}
-                  </span>
-                </div>
+                </HStack>
+              </Card>
+
+              {loadingSettings && (
+                <Banner
+                  status="info"
+                  title="Checking provider credentials and jcode OAuth status..."
+                />
               )}
-            </>
-          ) : null}
-        </section>
 
-        <details className="other-providers-details">
-          <summary className="other-providers-summary">
-            <span>Other Providers (optional, for switching later)</span>
-          </summary>
-          <div className="other-providers-body">
-            <div className="panel jcode-status-card">
-              <div className="jcode-status-title">
-                Other Local jcode Harness Providers
-              </div>
-              {otherJcodeProviders.map((p) => {
-                const info = jcodeAuth[p];
-                const rowReady = info?.status === "available";
-                return (
-                  <div key={p} className="jcode-status-row">
-                    <span>{p}</span>
-                    <span className={`pill ${rowReady ? "done" : "idle"}`}>
-                      {info
-                        ? `${info.status} (${info.authKind})`
-                        : "run jcode auth status"}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
+              <Card padding={4}>
+                <VStack gap={3}>
+                  <HStack gap={2} vAlign="center" hAlign="between" wrap="wrap">
+                    <HStack gap={2} vAlign="center">
+                      <Heading level={3}>{activeMeta.shortLabel}</Heading>
+                      <Badge
+                        variant={isReady ? "success" : "error"}
+                        label={readyLabel}
+                      />
+                    </HStack>
 
-            {otherApiKeyProviders.map((item) => {
-              const secretKey = item.secretKey!;
-              const isSet = Boolean(configuredKeys[secretKey]);
-              const inputId = `other-secret-${secretKey}`;
-              const hasFieldError = Boolean(
-                feedbackError && errorKey === secretKey
-              );
-              return (
-                <div key={secretKey} className="field-group">
-                  <div className="secret-label-row">
-                    <label htmlFor={inputId}>{item.secretLabel}</label>
-                    <span className={`pill ${isSet ? "done" : "idle"}`}>
-                      {isSet ? "Encrypted in SQLite" : "Not configured"}
-                    </span>
-                  </div>
-                  <div className="field-hint">{item.hint}</div>
-                  <div className="secret-input-row">
-                    <input
-                      ref={(el) => {
-                        inputRefs.current[secretKey] = el;
-                      }}
-                      id={inputId}
-                      type="password"
-                      className="input-control"
-                      value={keyDrafts[secretKey] ?? ""}
-                      aria-invalid={hasFieldError ? "true" : undefined}
-                      aria-describedby={
-                        hasFieldError ? "providers-secret-error" : undefined
-                      }
-                      onChange={(e) => {
-                        const nextVal = e.target.value;
-                        setKeyDrafts((prev) => ({
-                          ...prev,
-                          [secretKey]: nextVal,
-                        }));
-                        if (errorKey === secretKey && feedbackError) {
-                          setFeedbackError(null);
-                          setErrorKey(null);
-                        }
-                      }}
-                      placeholder="Paste API key (stored AES-256-GCM encrypted)..."
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      icon={<Icon icon={RefreshCw} />}
+                      isLoading={refreshing}
+                      label={refreshing ? "Refreshing..." : "Refresh Status"}
+                      onClick={() => void handleRefreshSettings()}
                     />
-                    <button
-                      type="button"
-                      className="btn primary"
-                      disabled={savingKey === secretKey}
-                      onClick={() => void handleSaveSecret(secretKey)}
-                    >
-                      {savingKey === secretKey ? "Saving..." : "Save Key"}
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </details>
+                  </HStack>
+
+                  <Text type="supporting">{activeMeta.hint}</Text>
+
+                  <Divider />
+
+                  {activeMeta.authMode === "jcode-oauth" ? (
+                    <VStack gap={2}>
+                      <HStack gap={2} vAlign="center" hAlign="between">
+                        <Text weight="medium">
+                          jcode OAuth ({activeMeta.jcodeAuthKey})
+                        </Text>
+                        <Badge
+                          variant={isReady ? "success" : "error"}
+                          label={
+                            activeJcodeInfo
+                              ? `${activeJcodeInfo.status} (${activeJcodeInfo.authKind})`
+                              : "CLI status unavailable"
+                          }
+                        />
+                      </HStack>
+
+                      {!isReady && (
+                        <Text type="supporting">
+                          Run <Code>jcode auth login</Code> in your terminal,
+                          then click Refresh Status.
+                        </Text>
+                      )}
+                    </VStack>
+                  ) : activeMeta.secretKey ? (
+                    <VStack gap={3}>
+                      <HStack gap={2} vAlign="end">
+                        <StackItem size="fill">
+                          <TextInput
+                            type="password"
+                            width="100%"
+                            label={activeMeta.secretLabel ?? activeMeta.secretKey}
+                            description={
+                              isActiveKeySet
+                                ? "Encrypted key stored in local SQLite"
+                                : "Stored AES-256-GCM encrypted in local SQLite"
+                            }
+                            value={keyDrafts[activeMeta.secretKey] ?? ""}
+                            status={
+                              feedbackError && errorKey === activeMeta.secretKey
+                                ? { type: "error", message: feedbackError }
+                                : undefined
+                            }
+                            onChange={(nextVal) => {
+                              const secretKey = activeMeta.secretKey!;
+                              setKeyDrafts((prev) => ({
+                                ...prev,
+                                [secretKey]: nextVal,
+                              }));
+                              if (errorKey === secretKey && feedbackError) {
+                                setFeedbackError(null);
+                                setErrorKey(null);
+                              }
+                            }}
+                            placeholder="Paste API key..."
+                          />
+                        </StackItem>
+
+                        <Button
+                          variant="primary"
+                          isLoading={savingKey === activeMeta.secretKey}
+                          label={
+                            savingKey === activeMeta.secretKey
+                              ? "Saving..."
+                              : "Save Key"
+                          }
+                          onClick={() =>
+                            void handleSaveSecret(activeMeta.secretKey!)
+                          }
+                        />
+                      </HStack>
+
+                      {activeRuntime === "jcode" && (
+                        <HStack gap={2} vAlign="center" hAlign="between">
+                          <Text type="supporting">
+                            jcode CLI ({activeMeta.jcodeAuthKey})
+                          </Text>
+                          <Badge
+                            variant={
+                              activeJcodeInfo?.status === "available"
+                                ? "success"
+                                : "neutral"
+                            }
+                            label={
+                              activeJcodeInfo
+                                ? `${activeJcodeInfo.status} (${activeJcodeInfo.authKind})`
+                                : "not probed"
+                            }
+                          />
+                        </HStack>
+                      )}
+                    </VStack>
+                  ) : null}
+                </VStack>
+              </Card>
+
+              <Collapsible
+                defaultIsOpen={false}
+                trigger={
+                  <Text weight="semibold">
+                    Other Providers (optional, for switching later)
+                  </Text>
+                }
+              >
+                <VStack gap={3} style={{ paddingTop: "var(--spacing-3)" }}>
+                  <Card variant="muted" padding={3}>
+                    <VStack gap={2}>
+                      <Text type="label" weight="semibold">
+                        Local jcode Harness Providers
+                      </Text>
+                      {otherJcodeProviders.map((p) => {
+                        const info = jcodeAuth[p];
+                        const rowReady = info?.status === "available";
+                        return (
+                          <HStack key={p} gap={2} vAlign="center" hAlign="between">
+                            <Code>{p}</Code>
+                            <Text type="supporting">
+                              {info
+                                ? `${info.status} (${info.authKind})`
+                                : "run jcode auth status"}
+                            </Text>
+                            {rowReady && (
+                              <Badge variant="success" label="Available" />
+                            )}
+                          </HStack>
+                        );
+                      })}
+                    </VStack>
+                  </Card>
+
+                  {otherApiKeyProviders.map((item) => {
+                    const secretKey = item.secretKey!;
+                    const isSet = Boolean(configuredKeys[secretKey]);
+                    const hasFieldError = Boolean(
+                      feedbackError && errorKey === secretKey
+                    );
+                    return (
+                      <Card key={secretKey} padding={3}>
+                        <VStack gap={2}>
+                          <HStack gap={2} vAlign="center" hAlign="between">
+                            <Text weight="semibold">{item.secretLabel}</Text>
+                            <Badge
+                              variant={isSet ? "success" : "neutral"}
+                              label={isSet ? "Encrypted" : "Not set"}
+                            />
+                          </HStack>
+                          <HStack gap={2} vAlign="end">
+                            <StackItem size="fill">
+                              <TextInput
+                                type="password"
+                                width="100%"
+                                label={item.secretLabel ?? secretKey}
+                                isLabelHidden
+                                value={keyDrafts[secretKey] ?? ""}
+                                status={
+                                  hasFieldError
+                                    ? { type: "error", message: feedbackError ?? undefined }
+                                    : undefined
+                                }
+                                onChange={(nextVal) => {
+                                  setKeyDrafts((prev) => ({
+                                    ...prev,
+                                    [secretKey]: nextVal,
+                                  }));
+                                  if (errorKey === secretKey && feedbackError) {
+                                    setFeedbackError(null);
+                                    setErrorKey(null);
+                                  }
+                                }}
+                                placeholder="Paste API key (AES-256-GCM encrypted)..."
+                              />
+                            </StackItem>
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              isLoading={savingKey === secretKey}
+                              label={
+                                savingKey === secretKey ? "Saving..." : "Save"
+                              }
+                              onClick={() => void handleSaveSecret(secretKey)}
+                            />
+                          </HStack>
+                        </VStack>
+                      </Card>
+                    );
+                  })}
+                </VStack>
+              </Collapsible>
+            </VStack>
           </div>
         )}
-      </div>
+      </VStack>
     </ModalDialog>
   );
 };
