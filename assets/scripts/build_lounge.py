@@ -49,7 +49,7 @@ POUF = {"radius": 0.52, "height": 0.4}
 PILLOWS = {"x": 0.6, "z": -0.08, "tilt": 0.15}
 
 
-# ---- Laying things out the office's way -----------------------------------------------------------
+# Laying things out the office's way
 #
 # Every number below is in the office's axes: (x across, y up, z forward), metres, the piece's origin
 # on the floor under its middle. at() turns them into Blender's (z up, forward is -y). A turn about x
@@ -158,7 +158,7 @@ class Piece:
         return ob
 
 
-# ---- The sofa ---------------------------------------------------------------------------------------
+# The sofa
 #
 # A plump three-seater facing forward: a cushion for each of the office's three places on a low base,
 # three back cushions tipped back a little against a back that runs the whole length, round-topped
@@ -221,7 +221,7 @@ def sofa():
     return s.finish("sofa")
 
 
-# ---- The pillow ---------------------------------------------------------------------------------------
+# The pillow
 #
 # A square throw pillow standing up, its face forward: plump in the middle and thin at its seam, its
 # sides drawn in and its corners poking out the way a stuffed pillow's do. A seam band runs round its
@@ -268,7 +268,7 @@ def pillow():
     return ob
 
 
-# ---- The pouf -------------------------------------------------------------------------------------------
+# The pouf
 #
 # A round floor pouf, soft as a marshmallow: a squat drum bulging round its middle, its bottom edge
 # rounded under and its top edge rolled well over (so a sitter's legs come out over the front of it),
@@ -306,7 +306,7 @@ def pouf():
     return s.finish("pouf")
 
 
-# ---- The coffee table -------------------------------------------------------------------------------------
+# The coffee table
 #
 # A round wooden top on a pedestal: a thick disc with a rounded edge, its surface at TABLE's height,
 # on a column that flares out to a round foot on the floor and up to a bracket under the top.
@@ -338,7 +338,7 @@ def coffee_table():
     return s.finish("coffee_table")
 
 
-# ---- Build, export, review --------------------------------------------------------------------------
+# Build, export, review
 
 PIECES = [sofa, pillow, pouf, coffee_table]
 

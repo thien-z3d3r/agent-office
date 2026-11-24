@@ -17,6 +17,7 @@ import { VStack } from "@astryxdesign/core/VStack";
 import { Cpu, RefreshCw, RotateCcw } from "lucide-react";
 import { useOfficeStore } from "../store/office-store.ts";
 import {
+  countRoleModelOverrides,
   PROVIDER_CATALOG,
   PROVIDER_META_BY_ID,
   resolveModelForRole,
@@ -83,10 +84,7 @@ export const ModelCatalogTab: React.FC<ModelCatalogTabProps> = ({
     }
   }, [activeProvider, fetchProviderModels]);
 
-  let roleOverrideCount = 0;
-  for (const r of roles) {
-    if (roleModels[r.id]) roleOverrideCount += 1;
-  }
+  const roleOverrideCount = countRoleModelOverrides(roleModels);
 
   const providerOptions = useMemo(
     () =>

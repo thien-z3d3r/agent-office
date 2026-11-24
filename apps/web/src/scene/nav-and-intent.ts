@@ -386,7 +386,7 @@ export class IntentQueue {
 
     this.queue.push(intent);
 
-    // Rule 3: Once backlog exceeds maxBacklog within a dwell window, collapse to the latest intent
+    // Collapse excess intents within one dwell window to the latest target.
     if (this.collapsedInCurrentWindow || this.queue.length > this.maxBacklog) {
       this.collapsedInCurrentWindow = true;
       this.queue = [intent];

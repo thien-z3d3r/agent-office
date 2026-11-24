@@ -70,7 +70,7 @@ PUP = dict(
         (None, None, {"z>": 0.6, "y>": 0.28}),
     ),
     mask=(),
-    # ---- How it moves -----------------------------------------------------------------------------
+    # How it moves
     # Frames a walk (trot) and a run (gallop) cycle take at 24 fps. Every breed covers the same ground
     # a second at its own clip speed (apps/web/src/scene/toon-actors.ts), so shorter legs take shorter, quicker
     # strides: the stride follows from these.

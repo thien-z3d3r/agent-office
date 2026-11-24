@@ -189,7 +189,6 @@ export const App: React.FC = () => {
             cameraPreset={cameraPreset}
             onSelectCameraPreset={handleSelectCameraPreset}
             drawerOpen={drawerOpen}
-            drawerTab={drawerTab}
             onToggleDrawer={handleToggleDrawer}
             onOpenDrawerTab={handleOpenDrawerTab}
             onOpenDispatch={handleOpenDispatch}

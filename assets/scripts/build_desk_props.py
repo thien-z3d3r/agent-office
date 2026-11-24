@@ -51,7 +51,7 @@ def material(name):
     return ao.material(name, COLORS[name])
 
 
-# ---- Building an object from shapes --------------------------------------------------------------
+# Building an object from shapes
 
 class Shapes:
     """One object's shapes in one bmesh, a material slot per material. Each shape's faces are
@@ -113,7 +113,7 @@ def faces_from(bm, start):
     return bm.faces[start:]
 
 
-# ---- The mug --------------------------------------------------------------------------------------
+# The mug
 #
 # A chunky diner mug: a little wider at the rim than the foot, a rolled rim, coffee a couple of
 # centimetres down, and a round handle out to +X. Its body is the old code-built mug's size (0.05 m
@@ -172,7 +172,7 @@ def mug():
     return s.finish("mug", sharp=math.radians(60))
 
 
-# ---- The books ------------------------------------------------------------------------------------
+# The books
 #
 # Chunky hardbacks: the boards and the spine are one U round a cream block of pages, which sits in
 # from the boards at the top, the foot and the fore-edge, so a book reads as a book from any side.
@@ -323,7 +323,7 @@ def main(write=True):
     return obs
 
 
-# ---- Review renders -------------------------------------------------------------------------------
+# Review renders
 
 def only(name, lineup=False):
     """Shows just the piece `name` in the review renders, or with `lineup` all of them in a row

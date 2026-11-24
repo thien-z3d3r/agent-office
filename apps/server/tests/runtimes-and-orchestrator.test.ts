@@ -155,7 +155,7 @@ test("AiSdkRuntimeAdapter executes ReAct tool loop, enforces command policy appr
     tmpDir
   );
 
-  // 1. Missing API key emits error status and throws
+  // Missing API key emits error status and rejects.
   const adapterNoKey = new AiSdkRuntimeAdapter(store, workspace);
   const errEvents: AgentEvent[] = [];
   await assert.rejects(async () => {
@@ -177,7 +177,7 @@ test("AiSdkRuntimeAdapter executes ReAct tool loop, enforces command policy appr
     errEvents.some((e) => e.t === "agent.status" && e.status === "error")
   );
 
-  // 2. With API key configured, writes hello.txt=42 and gates unlisted shell command on requestApproval
+  // Configured API key writes hello.txt and gates unlisted shell commands on approval.
   store.setSecret("KIMI_API_KEY", "sk-kimi-test-key");
   let turnCount = 0;
   let approvalAskedFor = "";

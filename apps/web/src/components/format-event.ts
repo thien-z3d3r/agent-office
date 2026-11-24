@@ -1,4 +1,5 @@
 import type { AgentEvent } from "@agent-office/protocol";
+import { countRoleModelOverrides } from "../store/provider-catalog.ts";
 
 export function formatEventLine(ev: AgentEvent): string {
   switch (ev.t) {
@@ -33,14 +34,7 @@ export function formatEventLine(ev: AgentEvent): string {
     case "agent.text":
       return `[${ev.agentId.toUpperCase()}] ${ev.delta.trim().slice(0, 80)}`;
     case "provider.changed": {
-      let overrideCount = 0;
-      if (ev.roleModels) {
-        for (const key in ev.roleModels) {
-          if (ev.roleModels[key as keyof typeof ev.roleModels]) {
-            overrideCount += 1;
-          }
-        }
-      }
+      const overrideCount = countRoleModelOverrides(ev.roleModels);
       return `[PROVIDER] Office unified provider switched to ${ev.provider.toUpperCase()} (${ev.runtime}${ev.model ? `, ${ev.model}` : ""}${overrideCount > 0 ? `, +${overrideCount} role overrides` : ""})`;
     }
     case "task.table.set":

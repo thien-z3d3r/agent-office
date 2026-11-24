@@ -122,6 +122,29 @@ export const PROVIDER_META_BY_ID: Record<ProviderId, FrontendProviderMeta> =
     FrontendProviderMeta
   >;
 
+export function countRoleModelOverrides(
+  roleModels?: Partial<Record<AgentRoleId, string | null>> | null
+): number {
+  if (!roleModels) return 0;
+  let count = 0;
+  for (const key in roleModels) {
+    if (roleModels[key as AgentRoleId]) count += 1;
+  }
+  return count;
+}
+
+export function resolveEffectiveDefaultModel(
+  provider: ProviderId,
+  activeModel?: string | null,
+  catalogDefault?: string | null
+): string {
+  return (
+    activeModel ??
+    catalogDefault ??
+    PROVIDER_META_BY_ID[provider].defaultModel
+  );
+}
+
 export function resolveModelForRole(args: {
   provider: ProviderId;
   roleId: AgentRoleId;

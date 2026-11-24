@@ -28,7 +28,7 @@ def args():
     return sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
 
 
-# ---- Scene ----------------------------------------------------------------------------------------
+# Scene
 
 def clear():
     """An empty scene to build in (the startup cube, camera and light, or the last build, gone)."""
@@ -102,7 +102,7 @@ def set_origin(ob, at):
     ob.matrix_world = ob.matrix_world @ Matrix.Translation(local)
 
 
-# ---- Shapes (added to a bmesh) --------------------------------------------------------------------
+# Shapes (added to a bmesh)
 
 def _place(bm, verts, center, rot, scale=(1, 1, 1)):
     m = Matrix.Translation(center) @ Euler(rot, 'XYZ').to_matrix().to_4x4() @ Matrix.Diagonal((*scale, 1))
@@ -209,7 +209,7 @@ def outline(bm, points, depth, center=(0, 0, 0), rot=(0, 0, 0), bevel=0.0):
     _merge(bm, part)
 
 
-# ---- One smooth skin ------------------------------------------------------------------------------
+# One smooth skin
 
 def fuse(ob, voxel=0.0065, smooth=10, quads=4200):
     """Melts overlapping shapes into one skin, rounds off the seams, then lays even quads over it.
@@ -285,7 +285,7 @@ def paint(ob, base, patches):
     bm.free()
 
 
-# ---- Rigs and clips -------------------------------------------------------------------------------
+# Rigs and clips
 
 def armature(name, spec):
     """An armature from [(bone, head, tail, parent or None, deforms)]. Rolls are set so every bone's
@@ -404,7 +404,7 @@ def show(arm, clips, clip, t):
     bpy.context.scene.frame_set(1 + round(t * clips[clip][0]))
 
 
-# ---- Export ---------------------------------------------------------------------------------------
+# Export
 
 def export(name, arm=None, uvs=False):
     """Writes apps/web/public/models/<name>.glb from everything in the scene. With a rig, its actions go
@@ -437,7 +437,7 @@ def export(name, arm=None, uvs=False):
     return path
 
 
-# ---- Review renders -------------------------------------------------------------------------------
+# Review renders
 
 VIEWS = {
     "tq": (0.95, -1.0, 0.55),

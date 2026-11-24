@@ -54,7 +54,7 @@ def material(name):
     return ao.material(name, COLORS[name])
 
 
-# ---- Building an object from shapes --------------------------------------------------------------
+# Building an object from shapes
 
 class Shapes:
     """One object's shapes in one bmesh, a material slot per material. Each shape's faces are
@@ -109,7 +109,7 @@ class Shapes:
         return ob
 
 
-# ---- Leaves ---------------------------------------------------------------------------------------
+# Leaves
 #
 # A leaf is built flat in its own space (u across it, v along it from its base to its tip, w out
 # of its top), then placed by a frame(). Leaves are thin slabs, not paper: a slab has a rim for the
@@ -308,7 +308,7 @@ def bezier(a, b, c, n=6):
     return [tuple((1 - t) ** 2 * a + 2 * (1 - t) * t * b + t * t * c) for t in (i / n for i in range(n + 1))]
 
 
-# ---- Pots -----------------------------------------------------------------------------------------
+# Pots
 
 def terracotta(s, scale=1.0, segs=20, soil_z=SOIL_Z):
     """A flowerpot with a band round its rim, and the soil in it up to `soil_z`, all `scale` times
@@ -333,7 +333,7 @@ def soil(s, r, z, segs):
     s.add("Soil", ao.lathe, [(r, z - 0.006 * r / 0.25), (r * 0.6, z), (0.0, z + 0.004 * r / 0.25)], segs=segs)
 
 
-# ---- The monstera ---------------------------------------------------------------------------------
+# The monstera
 #
 # Big split leaves on arching stalks, fanned out round the pot: the older ones low, big and drooping
 # in the dark green, the younger ones higher, smaller and lighter. Its leaves reach about 0.52 m out,
@@ -377,7 +377,7 @@ def monstera():
     return root
 
 
-# ---- The snake plant ------------------------------------------------------------------------------
+# The snake plant
 #
 # Stiff upright sword leaves, dark green with pale chevron bands, leaning a little out of a glazed
 # planter.
@@ -412,7 +412,7 @@ def snake_plant():
     return root
 
 
-# ---- The ficus ------------------------------------------------------------------------------------
+# The ficus
 #
 # A little tree: a bent trunk up to a round crown, a dark mass inside with big leaves shingled all
 # over it, each hanging down the crown's side over the ones below.
@@ -474,7 +474,7 @@ def ficus():
     return root
 
 
-# ---- The succulent --------------------------------------------------------------------------------
+# The succulent
 #
 # An echeveria for a desk: a rosette of plump spoon-shaped leaves sitting up on the rim of a little
 # terracotta pot, the outer ring spread wide and darker, the inner ones smaller, paler and standing
@@ -540,7 +540,7 @@ def main(write=True):
     return roots
 
 
-# ---- Review renders -------------------------------------------------------------------------------
+# Review renders
 
 def only(name, lineup=False):
     """Shows just the species `name` (pot and leaves) in the review renders, or with `lineup` all of

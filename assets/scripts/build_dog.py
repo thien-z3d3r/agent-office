@@ -135,7 +135,7 @@ def field(patch):
     return f
 
 
-# ---- Loose parts (each its own shape, skinned rigidly to one or two bones) ----------------------
+# Loose parts (each its own shape, skinned rigidly to one or two bones)
 
 def part(name, mat, build, groups, patches=()):
     """A separate little mesh with one material (and `patches` of others painted on it, as
@@ -269,7 +269,7 @@ def parts():
     return obs
 
 
-# ---- Skeleton -----------------------------------------------------------------------------------
+# Skeleton
 
 def tail_joints():
     """The tail bones' ends: every nth point of the tail, from the root to the tip."""
@@ -381,7 +381,7 @@ def sockets():
     }
 
 
-# ---- Animation ----------------------------------------------------------------------------------
+# Animation
 #
 # The legs are posed with IK: each paw follows a target bone (ik_front_L, ...) that the clips
 # move around, and the exporter samples the solved pose into plain keyframes. The targets
@@ -586,7 +586,7 @@ def clips():
     }
 
 
-# ---- Review -------------------------------------------------------------------------------------
+# Review
 
 def floor_report(samples=None):
     """How far each clip pushes the skin under the floor (metres, negative is under), and which

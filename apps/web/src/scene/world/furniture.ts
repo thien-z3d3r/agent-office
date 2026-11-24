@@ -271,7 +271,7 @@ function addHangingSign(
   const boardMat = toon(role.tint);
   const boardGeo = roundedBox(signW, 0.036, signH, 0.06);
 
-  // Double-sided 45-degree pitched canopy sign: clearly legible from straight above AND front/back.
+  // Pitch both faces at 45 degrees so signs remain readable from overhead and angled cameras.
   const frontBoard = mesh(boardGeo, boardMat, 0, signY, z + halfDepth, false);
   frontBoard.rotation.x = SIGN_TILT;
   staticSign.add(frontBoard);
@@ -308,7 +308,6 @@ function addHangingSign(
 
   const faceW = signW - 0.06;
   const faceH = signH - 0.06;
-  // +Z face tilted 45 deg upward (normal points +Y and +Z)
   atlas.addPlane(
     rect,
     faceW,
@@ -325,7 +324,6 @@ function addHangingSign(
       -SIGN_TILT
     )
   );
-  // -Z face tilted 45 deg upward (normal points +Y and -Z)
   atlas.addPlane(
     rect,
     faceW,

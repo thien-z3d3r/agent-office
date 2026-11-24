@@ -1,5 +1,5 @@
 import React, { useMemo } from "react";
-import type { AgentRoleId, ProviderId } from "@agent-office/protocol";
+import type { ProviderId } from "@agent-office/protocol";
 import { Button } from "@astryxdesign/core/Button";
 import { IconButton } from "@astryxdesign/core/IconButton";
 import { Icon } from "@astryxdesign/core/Icon";
@@ -27,8 +27,9 @@ import {
 } from "lucide-react";
 import { useOfficeStore } from "../store/office-store.ts";
 import {
+  countRoleModelOverrides,
   PROVIDER_CATALOG,
-  PROVIDER_META_BY_ID,
+  resolveEffectiveDefaultModel,
 } from "../store/provider-catalog.ts";
 import type { CameraPreset } from "../App.tsx";
 import type { DrawerTab } from "./SidePanel.tsx";
@@ -39,7 +40,6 @@ export interface HudDockProps {
   cameraPreset: CameraPreset;
   onSelectCameraPreset: (preset: CameraPreset) => void;
   drawerOpen: boolean;
-  drawerTab: DrawerTab;
   onToggleDrawer: () => void;
   onOpenDrawerTab: (tab: DrawerTab) => void;
   onOpenDispatch: () => void;
@@ -63,24 +63,18 @@ export const HudDock: React.FC<HudDockProps> = React.memo(
         s.modelCatalogByProvider[s.snapshot.activeProvider]?.defaultModel ??
         null
     );
-    const roleOverrideCount = useOfficeStore((s) => {
-      let count = 0;
-      const rm = s.snapshot.roleModels;
-      if (rm) {
-        for (const k in rm) {
-          if (rm[k as AgentRoleId]) count += 1;
-        }
-      }
-      return count;
-    });
+    const roleOverrideCount = useOfficeStore((s) =>
+      countRoleModelOverrides(s.snapshot.roleModels)
+    );
     const setActiveProvider = useOfficeStore((s) => s.setActiveProvider);
     const replayFixture = useOfficeStore((s) => s.replayFixture);
     const openSettingsModal = useOfficeStore((s) => s.openSettingsModal);
 
-    const effectiveDefaultModel =
-      activeModel ??
-      catalogDefault ??
-      PROVIDER_META_BY_ID[activeProvider].defaultModel;
+    const effectiveDefaultModel = resolveEffectiveDefaultModel(
+      activeProvider,
+      activeModel,
+      catalogDefault
+    );
 
     const providerOptions = useMemo(
       () =>

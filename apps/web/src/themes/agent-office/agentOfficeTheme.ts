@@ -9,28 +9,24 @@ export const agentOfficeTheme = defineTheme({
     multiplier: 1.25,
   },
   tokens: {
-    // Signature warm terracotta-coral brand accent (WCAG AA/AAA compliant on both light & dark)
     "--color-accent": ["#d6552a", "#ff8a5b"],
     "--color-accent-muted": ["rgba(214, 85, 42, 0.14)", "rgba(255, 138, 91, 0.20)"],
     "--color-on-accent": ["#ffffff", "#171a26"],
     "--color-text-accent": ["#b8431c", "#ffa17a"],
     "--color-icon-accent": ["#c94c23", "#ff9468"],
 
-    // Warm sunlit parchment (light) & deep twilight indigo-slate (dark) matching the 3D office sky
     "--color-background-body": ["#f4efe7", "#111420"],
     "--color-background-surface": ["#fcf9f4", "#171b2a"],
     "--color-background-card": ["#ffffff", "#1d2236"],
     "--color-background-popover": ["#ffffff", "#232940"],
     "--color-background-muted": ["rgba(43, 45, 66, 0.055)", "rgba(244, 239, 230, 0.07)"],
 
-    // High-contrast ink & warm bone typography
     "--color-text-primary": ["#1e2133", "#f3efe8"],
     "--color-text-secondary": ["#585a6b", "#a9aec2"],
     "--color-text-disabled": ["#9a9aa6", "#64697d"],
     "--color-icon-primary": ["#1e2133", "#f3efe8"],
     "--color-icon-secondary": ["#585a6b", "#a9aec2"],
 
-    // Crisp, restrained hairline borders (eliminates heavy box-in-box clutter)
     "--color-border": ["rgba(30, 33, 51, 0.12)", "rgba(243, 239, 232, 0.12)"],
     "--color-border-emphasized": ["rgba(30, 33, 51, 0.24)", "rgba(243, 239, 232, 0.24)"],
     "--color-neutral": ["rgba(30, 33, 51, 0.075)", "rgba(243, 239, 232, 0.10)"],
@@ -38,7 +34,6 @@ export const agentOfficeTheme = defineTheme({
     "--color-overlay-hover": ["rgba(30, 33, 51, 0.05)", "rgba(255, 255, 255, 0.06)"],
     "--color-overlay-pressed": ["rgba(30, 33, 51, 0.10)", "rgba(255, 255, 255, 0.12)"],
 
-    // Refined semantic status tokens
     "--color-success": ["#0b875b", "#14b885"],
     "--color-success-muted": ["rgba(11, 135, 91, 0.13)", "rgba(20, 184, 133, 0.18)"],
     "--color-on-success": ["#ffffff", "#0d1f19"],

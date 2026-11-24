@@ -58,7 +58,7 @@ FRIDGE_AT = (-3.2, 0.0, 0.0)
 FRIDGE = (1.1, 1.0, 2.2)
 
 
-# ---- Building an object from shapes --------------------------------------------------------------
+# Building an object from shapes
 
 class Shapes:
     """One object's shapes, a bmesh per material. Boxes are shaded flat, round things smooth."""
@@ -163,7 +163,7 @@ def not_facing_y(f):
     return abs(f.normal.y) < 0.99
 
 
-# ---- The counter ----------------------------------------------------------------------------------
+# The counter
 
 # Its cupboards: six columns across the front, a drawer over a door in each, except the one under the
 # machine, which is three drawers. Doors pair up, their knobs by the middle of the pair.
@@ -217,7 +217,7 @@ def counter():
     return s.finish("counter", (0, 0, 0))
 
 
-# ---- The espresso machine ------------------------------------------------------------------------
+# The espresso machine
 #
 # Built round the middle of its feet (x across, its front toward -y, z up from the counter top), then
 # set on the counter at MACHINE_AT. Chunky and dark like the old one, with a chrome face: a gauge
@@ -271,7 +271,7 @@ def machine():
     return s.finish("coffee_machine", MACHINE_AT)
 
 
-# ---- The fridge -----------------------------------------------------------------------------------
+# The fridge
 #
 # A retro one, all soft corners: a round-shouldered body on chrome legs, a freezer door over the big
 # one with chunky chrome handles on the counter's side, a chrome badge, and notes and magnets stuck on.

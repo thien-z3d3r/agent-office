@@ -8,6 +8,7 @@ import { ListChecks, Plus } from "lucide-react";
 import { useOfficeStore } from "../store/office-store.ts";
 import {
   PROVIDER_META_BY_ID,
+  resolveEffectiveDefaultModel,
   resolveModelForRole,
 } from "../store/provider-catalog.ts";
 
@@ -36,10 +37,11 @@ export const TaskTablePanel: React.FC<TaskTablePanelProps> = React.memo(
       [taskTable]
     );
 
-    const effectiveDefaultModel =
-      activeModel ??
-      catalogDefault ??
-      PROVIDER_META_BY_ID[activeProvider].defaultModel;
+    const effectiveDefaultModel = resolveEffectiveDefaultModel(
+      activeProvider,
+      activeModel,
+      catalogDefault
+    );
 
     return (
       <section
