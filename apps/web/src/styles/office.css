@@ -8,9 +8,8 @@
     --hud-inset: var(--spacing-3);
     --hud-gap: var(--spacing-3);
     --hud-drawer-width: 344px;
-    --hud-surface-bg: color-mix(in srgb, var(--color-background-surface) 90%, transparent);
+    --hud-surface-bg: color-mix(in srgb, var(--color-background-surface) 96%, transparent);
     --hud-surface-solid: var(--color-background-surface);
-    --hud-blur: blur(16px) saturate(1.15);
     --hud-border: 1px solid var(--color-border);
     --hud-border-strong: 1px solid var(--color-border-emphasized);
     --hud-ring-accent: 0 0 0 2px var(--color-accent-muted);
@@ -82,16 +81,15 @@
       "bottom";
   }
 
-  #hud > * {
+  :where(#hud > *) {
     pointer-events: none;
   }
 
-  /* Reusable floating frosted surface */
-  .hud-surface {
+  /* Reusable floating studio surface (no GPU-heavy backdrop-filter over WebGL) */
+  .hud-surface,
+  #hud > .hud-surface {
     pointer-events: auto;
     background: var(--hud-surface-bg);
-    backdrop-filter: var(--hud-blur);
-    -webkit-backdrop-filter: var(--hud-blur);
     border: var(--hud-border);
     border-radius: var(--radius-container);
     box-shadow: var(--shadow-med);
@@ -524,8 +522,7 @@
     align-items: center;
     justify-content: center;
     padding: var(--spacing-4);
-    background: color-mix(in srgb, var(--color-background-body) 88%, transparent);
-    backdrop-filter: blur(12px);
+    background: color-mix(in srgb, var(--color-background-body) 94%, transparent);
   }
 
   .hud-loading-card {

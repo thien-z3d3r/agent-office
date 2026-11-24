@@ -1636,3 +1636,38 @@ test("StageRunner and JcodeRuntimeAdapter pass resolved per-role -m <model> acro
 
   store.close();
 });
+
+test("OfficeOrchestrator.resolveApproval clears replayed and fixture approvals even without an in-memory promise", () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ao-approval-replay-"));
+  const dbPath = path.join(tmpDir, "office.sqlite3");
+  const sys = createOfficeSystem({ dbPath, stepDelayMs: 5 });
+
+  sys.orchestrator.emit({
+    id: "ev-req-1",
+    ts: Date.now(),
+    t: "approval.req",
+    reqId: "req-fixture-1",
+    agentId: "tl",
+    runId: "run-fixture-1",
+    ticketId: "T-99",
+    kind: "merge",
+    action: "Merge agent/T-99 -> main",
+    risk: "medium",
+    reason: "Fixture approval gate",
+  });
+
+  assert.ok(sys.orchestrator.getSnapshot().approvals["req-fixture-1"]);
+  assert.equal(
+    sys.orchestrator.resolveApproval("req-fixture-1", false, "Denied in test"),
+    true
+  );
+  assert.equal(
+    sys.orchestrator.getSnapshot().approvals["req-fixture-1"],
+    undefined
+  );
+  assert.equal(sys.orchestrator.getSnapshot().agents.tl.status, "error");
+  assert.equal(sys.orchestrator.resolveApproval("req-unknown", true), false);
+
+  sys.store.close();
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});

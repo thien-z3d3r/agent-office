@@ -38,8 +38,12 @@ const DESK_LEG_GEO = new THREE.CylinderGeometry(
   8
 );
 const DESK_MODESTY_GEO = new THREE.BoxGeometry(DESK_SIZE.width - 0.3, 0.32, 0.03);
-const SIGN_CORD_H = WALL_HEIGHT - (3.35 + 0.6 / 2);
-const SIGN_CORD_GEO = new THREE.CylinderGeometry(0.012, 0.012, SIGN_CORD_H, 5);
+const SIGN_Y = 2.85;
+const SIGN_TILT = Math.PI / 4;
+const SIGN_FACE_H = 0.56;
+const SIGN_RIDGE_Y = SIGN_Y + (SIGN_FACE_H / 2) * Math.sin(SIGN_TILT);
+const SIGN_CORD_H = WALL_HEIGHT - SIGN_RIDGE_Y;
+const SIGN_CORD_GEO = new THREE.CylinderGeometry(0.006, 0.006, SIGN_CORD_H, 5);
 const MONITOR_NECK_GEO = new THREE.CylinderGeometry(0.028, 0.032, 0.24, 8);
 
 const parentDummy = new THREE.Object3D();
@@ -54,13 +58,15 @@ function composeWorldMatrix(
   cx: number,
   cy: number,
   cz: number,
-  cRotY = 0
+  cRotY = 0,
+  cRotX = 0
 ): THREE.Matrix4 {
   parentDummy.position.set(px, py, pz);
   parentDummy.rotation.set(0, pRotY, 0);
   parentDummy.updateMatrix();
   childDummy.position.set(cx, cy, cz);
-  childDummy.rotation.set(0, cRotY, 0);
+  childDummy.rotation.order = "YXZ";
+  childDummy.rotation.set(cRotX, cRotY, 0);
   childDummy.updateMatrix();
   return worldMatScratch.multiplyMatrices(parentDummy.matrix, childDummy.matrix);
 }
@@ -247,35 +253,40 @@ function addHangingSign(
   staticRoot: THREE.Group,
   atlas: StaticSignAtlas
 ): void {
-  const signW = 1.85;
-  const signH = 0.6;
-  const signY = 3.35;
-  const z = -DESK_SIZE.depth / 2 + 0.03;
+  const signW = 1.82;
+  const signH = SIGN_FACE_H;
+  const signY = SIGN_Y;
+  // Center each sign over its own desk/seat zone so back-to-back desks never overlap.
+  const z = 0.24;
+  const halfDepth = (signH / 2) * Math.cos(SIGN_TILT);
+  const faceOffset = 0.022;
+  const normalY = Math.sin(SIGN_TILT);
+  const normalZ = Math.cos(SIGN_TILT);
 
   const staticSign = new THREE.Group();
   staticSign.position.set(def.x, 0, def.z);
   staticSign.rotation.y = def.rotY;
 
-  const cordMat = toon("#2b2d42");
-  const board = mesh(
-    roundedBox(signW, 0.04, signH, 0.08),
-    toon(role.tint),
-    0,
-    signY,
-    z,
-    false
-  );
-  board.rotation.x = Math.PI / 2;
-  staticSign.add(board);
+  const cordMat = toon("#64748b", { outline: false });
+  const boardMat = toon(role.tint);
+  const boardGeo = roundedBox(signW, 0.036, signH, 0.06);
 
-  const top = signY + signH / 2;
+  // Double-sided 45-degree pitched canopy sign: clearly legible from straight above AND front/back.
+  const frontBoard = mesh(boardGeo, boardMat, 0, signY, z + halfDepth, false);
+  frontBoard.rotation.x = SIGN_TILT;
+  staticSign.add(frontBoard);
+
+  const backBoard = mesh(boardGeo, boardMat, 0, signY, z - halfDepth, false);
+  backBoard.rotation.x = -SIGN_TILT;
+  staticSign.add(backBoard);
+
   for (const sx of [-1, 1]) {
     staticSign.add(
       mesh(
         SIGN_CORD_GEO,
         cordMat,
         sx * 0.62,
-        (WALL_HEIGHT + top) / 2,
+        (WALL_HEIGHT + SIGN_RIDGE_Y) / 2,
         z,
         false
       )
@@ -297,17 +308,39 @@ function addHangingSign(
 
   const faceW = signW - 0.06;
   const faceH = signH - 0.06;
+  // +Z face tilted 45 deg upward (normal points +Y and +Z)
   atlas.addPlane(
     rect,
     faceW,
     faceH,
-    composeWorldMatrix(def.x, 0, def.z, def.rotY, 0, signY, z + 0.024, 0)
+    composeWorldMatrix(
+      def.x,
+      0,
+      def.z,
+      def.rotY,
+      0,
+      signY + normalY * faceOffset,
+      z + halfDepth + normalZ * faceOffset,
+      0,
+      -SIGN_TILT
+    )
   );
+  // -Z face tilted 45 deg upward (normal points +Y and -Z)
   atlas.addPlane(
     rect,
     faceW,
     faceH,
-    composeWorldMatrix(def.x, 0, def.z, def.rotY, 0, signY, z - 0.024, Math.PI)
+    composeWorldMatrix(
+      def.x,
+      0,
+      def.z,
+      def.rotY,
+      0,
+      signY + normalY * faceOffset,
+      z - halfDepth - normalZ * faceOffset,
+      Math.PI,
+      -SIGN_TILT
+    )
   );
 }
 

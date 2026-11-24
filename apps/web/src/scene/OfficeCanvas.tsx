@@ -147,8 +147,9 @@ export const OfficeCanvas: React.FC<OfficeCanvasProps> = React.memo(({
 
     const renderer = new THREE.WebGLRenderer({
       canvas,
-      antialias: true,
-      powerPreference: "high-performance",
+      antialias: !initialStore.performanceMode,
+      stencil: false,
+      powerPreference: initialStore.performanceMode ? "low-power" : "default",
     });
     renderer.shadowMap.type = THREE.PCFShadowMap;
     renderer.shadowMap.autoUpdate = false;
@@ -194,7 +195,7 @@ export const OfficeCanvas: React.FC<OfficeCanvasProps> = React.memo(({
       initialNight ? 0.95 : 2.2
     );
     sun.position.set(-8, 18, 10);
-    sun.shadow.mapSize.set(1024, 1024);
+    sun.shadow.mapSize.set(768, 768);
     Object.assign(sun.shadow.camera, {
       left: -32,
       right: 32,
@@ -212,7 +213,7 @@ export const OfficeCanvas: React.FC<OfficeCanvasProps> = React.memo(({
     let lastShadowUpdate = 0;
 
     const applyRenderQuality = (perfMode: boolean) => {
-      const dpr = perfMode ? 1 : Math.min(window.devicePixelRatio, 1.5);
+      const dpr = perfMode ? 1 : Math.min(window.devicePixelRatio, 1.25);
       renderer.setPixelRatio(dpr);
       renderer.setSize(window.innerWidth, window.innerHeight, false);
       effect.enabled = !perfMode;
@@ -232,7 +233,8 @@ export const OfficeCanvas: React.FC<OfficeCanvasProps> = React.memo(({
     const timer = new Timer();
     let loopRunning = false;
     let rafId = 0;
-    let idleTimerId = 0;
+    let lastRenderMs = 0;
+    let interactiveUntilMs = 0;
     let lastBoardSync = 0;
     const targetVec = new THREE.Vector3();
     const needyPosScratch = new THREE.Vector3();
@@ -249,13 +251,24 @@ export const OfficeCanvas: React.FC<OfficeCanvasProps> = React.memo(({
       }
     };
 
-    const tick = () => {
+    const tick = (nowMs: number) => {
       rafId = 0;
       if (disposed || !loopRunning || isHidden()) {
         loopRunning = false;
         return;
       }
-      animate();
+      const isInteractive = nowMs < interactiveUntilMs;
+      const minFrameMs = storeState.performanceMode
+        ? isInteractive
+          ? 33
+          : 66
+        : isInteractive
+          ? 16
+          : 33;
+      if (lastRenderMs === 0 || nowMs - lastRenderMs >= minFrameMs - 1) {
+        lastRenderMs = nowMs;
+        animate();
+      }
       if (loopRunning && !disposed && !isHidden()) {
         rafId = requestAnimationFrame(tick);
       }
@@ -263,17 +276,17 @@ export const OfficeCanvas: React.FC<OfficeCanvasProps> = React.memo(({
 
     const startLoop = () => {
       if (disposed || isHidden() || loopRunning) return;
-      if (idleTimerId) {
-        clearTimeout(idleTimerId);
-        idleTimerId = 0;
-      }
       timer.reset();
+      lastRenderMs = 0;
       loopRunning = true;
       rafId = requestAnimationFrame(tick);
     };
 
-    const wake = (needsShadow = false) => {
+    const wake = (needsShadow = false, interactive = false) => {
       if (disposed) return;
+      if (interactive) {
+        interactiveUntilMs = performance.now() + 450;
+      }
       if (needsShadow) {
         shadowPending = true;
         forceShadow = true;
@@ -440,7 +453,7 @@ export const OfficeCanvas: React.FC<OfficeCanvasProps> = React.memo(({
         shadowPending &&
         (forceShadow ||
           lastShadowUpdate === 0 ||
-          nowPerf - lastShadowUpdate >= 100 ||
+          nowPerf - lastShadowUpdate >= 350 ||
           !sceneActive)
       ) {
         renderer.shadowMap.needsUpdate = true;
@@ -452,15 +465,6 @@ export const OfficeCanvas: React.FC<OfficeCanvasProps> = React.memo(({
 
       if (builtWorld && !controlsActive && !sceneActive) {
         stopLoop();
-        if (!isReduced && !idleTimerId && !isHidden()) {
-          idleTimerId = window.setTimeout(() => {
-            idleTimerId = 0;
-            if (!disposed && !isHidden()) {
-              worldRef.current.dog?.advanceIdleClock(0.9);
-              wake(false);
-            }
-          }, 1000);
-        }
       }
     };
 
@@ -554,13 +558,14 @@ export const OfficeCanvas: React.FC<OfficeCanvasProps> = React.memo(({
     });
 
     const raycaster = new THREE.Raycaster();
+    raycaster.layers.enable(1);
     const pointer = new THREE.Vector2();
     let downX = 0;
     let downY = 0;
     const onPointerDown = (e: PointerEvent) => {
       downX = e.clientX;
       downY = e.clientY;
-      wake(false);
+      wake(false, true);
     };
     const onPointerUp = (e: PointerEvent) => {
       if (Math.hypot(e.clientX - downX, e.clientY - downY) > 6) return;
@@ -585,15 +590,31 @@ export const OfficeCanvas: React.FC<OfficeCanvasProps> = React.memo(({
         callbacksRef.current.onSelectAgentModal(roleId);
       }
     };
-    const onWheel = () => wake(false);
-    const onKeyDown = () => wake(false);
-    const onControlsWake = () => wake(false);
+    const onWheel = () => wake(false, true);
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      if (
+        e.key === "ArrowUp" ||
+        e.key === "ArrowDown" ||
+        e.key === "ArrowLeft" ||
+        e.key === "ArrowRight" ||
+        e.key === "Escape"
+      ) {
+        wake(false, true);
+      }
+    };
+    const onControlsWake = () => wake(false, true);
     const onVisibilityChange = () => {
       if (isHidden()) {
-        if (idleTimerId) {
-          clearTimeout(idleTimerId);
-          idleTimerId = 0;
-        }
         stopLoop();
       } else {
         timer.reset();
@@ -605,7 +626,7 @@ export const OfficeCanvas: React.FC<OfficeCanvasProps> = React.memo(({
       const h = window.innerHeight;
       const dpr = storeState.performanceMode
         ? 1
-        : Math.min(window.devicePixelRatio, 1.5);
+        : Math.min(window.devicePixelRatio, 1.25);
       renderer.setPixelRatio(dpr);
       renderer.setSize(w, h, false);
       camera.aspect = w / h;
@@ -629,10 +650,6 @@ export const OfficeCanvas: React.FC<OfficeCanvasProps> = React.memo(({
     return () => {
       disposed = true;
       wakeRef.current = null;
-      if (idleTimerId) {
-        clearTimeout(idleTimerId);
-        idleTimerId = 0;
-      }
       stopLoop();
       window.removeEventListener("resize", onResize);
       window.removeEventListener("keydown", onKeyDown);

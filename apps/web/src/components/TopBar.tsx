@@ -36,7 +36,6 @@ export const TopBar: React.FC<TopBarProps> = React.memo((props) => {
         <StatusDot
           variant={connected ? "success" : "error"}
           label={connected ? "Connected to local event stream" : "Disconnected"}
-          isPulsing={connected}
           tooltip={
             connected
               ? "Live connection to local Agent Office server"

@@ -305,8 +305,8 @@ export class ToonLaptopPool {
   private readonly orderedSlots: LaptopSlot[] = [];
   private readonly cols = 4;
   private readonly rows: number;
-  private readonly cellW = 640;
-  private readonly cellH = 420;
+  private readonly cellW = 384;
+  private readonly cellH = 256;
   private readonly atlasCanvas = document.createElement("canvas");
   private readonly atlasCtx: CanvasRenderingContext2D;
   private readonly atlasTex: THREE.CanvasTexture;
@@ -339,7 +339,7 @@ export class ToonLaptopPool {
     this.atlasCtx = this.atlasCanvas.getContext("2d")!;
     this.atlasTex = new THREE.CanvasTexture(this.atlasCanvas);
     this.atlasTex.colorSpace = THREE.SRGBColorSpace;
-    this.atlasTex.anisotropy = 4;
+    this.atlasTex.anisotropy = 2;
 
     const baseShellGeo = roundedBox(0.78, 0.035, 0.52, 0.04);
     const kbGeo = new THREE.BoxGeometry(0.66, 0.006, 0.24);
@@ -505,19 +505,19 @@ export class ToonLaptopPool {
     ctx.fillStyle = "#1b1d2e";
     ctx.fillRect(0, 0, this.cellW, this.cellH);
     ctx.fillStyle = "#06d6a0";
-    ctx.font = "700 24px ui-monospace, Menlo, Consolas, monospace";
-    ctx.fillText(`$ agent-office [${status.toUpperCase()}]`, 24, 44);
+    ctx.font = "700 15px ui-monospace, Menlo, Consolas, monospace";
+    ctx.fillText(`$ agent-office [${status.toUpperCase()}]`, 14, 28);
     ctx.fillStyle = "#ffd166";
-    ctx.font = "600 20px ui-monospace, Menlo, Consolas, monospace";
-    ctx.fillText(detail.slice(0, 46), 24, 82);
+    ctx.font = "600 12px ui-monospace, Menlo, Consolas, monospace";
+    ctx.fillText(detail.slice(0, 44), 14, 52);
 
     ctx.fillStyle = "#cbd5e1";
-    ctx.font = "400 18px ui-monospace, Menlo, Consolas, monospace";
+    ctx.font = "400 11px ui-monospace, Menlo, Consolas, monospace";
     const lines = (streamTail || "// Waiting for task dispatch...")
       .split("\n")
       .slice(-10);
     lines.forEach((l, lineIdx) => {
-      ctx.fillText(l.slice(0, 52), 24, 126 + lineIdx * 26);
+      ctx.fillText(l.slice(0, 48), 14, 78 + lineIdx * 16);
     });
     ctx.restore();
 
@@ -556,7 +556,7 @@ export class ToonLaptopPool {
 
     if (
       structChanged ||
-      (streamChanged && (nowMs - slot.lastPaintMs >= 140 || live.status === "done"))
+      (streamChanged && (nowMs - slot.lastPaintMs >= 300 || live.status === "done"))
     ) {
       this.paintCell(idx, slot, live.status, live.detail, live.streamBuffer, nowMs);
       return lidMoved;
@@ -713,6 +713,7 @@ export class ToonWorkerPool {
   private readonly subMat4 = new THREE.Matrix4();
   private readonly tmpColor = new THREE.Color();
   private readonly raySprites: THREE.Sprite[] = [];
+  private matricesDirty = true;
 
   constructor(
     roles: RoleConfig[],
@@ -887,11 +888,14 @@ export class ToonWorkerPool {
         {
           bg: "#2b2d42",
           color: "#fffaf3",
-          size: 36,
+          size: 30,
           border: "#fffaf3",
         }
       );
-      nameTag.position.y = 1.55;
+      nameTag.material.depthTest = false;
+      nameTag.position.y = 1.78;
+      nameTag.renderOrder = 20;
+      nameTag.layers.set(1);
       nameTag.userData.roleId = role.id;
       spriteAnchor.add(nameTag);
       this.root.add(spriteAnchor);
@@ -996,6 +1000,14 @@ export class ToonWorkerPool {
   ): void {
     const slot = this.slots.get(roleId);
     if (!slot) return;
+    if (
+      slot.pos.x !== x ||
+      slot.pos.y !== y ||
+      slot.pos.z !== z ||
+      slot.rotY !== rotY
+    ) {
+      this.matricesDirty = true;
+    }
     slot.pos.set(x, y, z);
     slot.rotY = rotY;
     slot.spriteAnchor.position.set(x, y, z);
@@ -1071,17 +1083,19 @@ export class ToonWorkerPool {
       const { w, h } = paintCardCanvas(canvas, cardOpts);
       const tex = new THREE.CanvasTexture(canvas);
       tex.colorSpace = THREE.SRGBColorSpace;
-      tex.anisotropy = 4;
+      tex.anisotropy = 2;
       const mat = new THREE.SpriteMaterial({
         map: tex,
+        depthTest: false,
         depthWrite: false,
         transparent: true,
       });
       const sprite = new THREE.Sprite(mat);
       sprite.scale.set((w / CARD_RES) * TEXT_SCALE, (h / CARD_RES) * TEXT_SCALE, 1);
       sprite.center.set(0.5, 0);
-      sprite.position.y = 1.82;
-      sprite.renderOrder = 10;
+      sprite.position.y = 2.08;
+      sprite.renderOrder = 25;
+      sprite.layers.set(1);
       sprite.userData.roleId = slot.role.id;
       slot.spriteAnchor.add(sprite);
       slot.bubbleHandle = {
@@ -1099,7 +1113,7 @@ export class ToonWorkerPool {
         bh.tex.dispose();
         const nextTex = new THREE.CanvasTexture(bh.canvas);
         nextTex.colorSpace = THREE.SRGBColorSpace;
-        nextTex.anisotropy = 4;
+        nextTex.anisotropy = 2;
         bh.tex = nextTex;
         bh.sprite.material.map = nextTex;
         bh.sprite.material.needsUpdate = true;
@@ -1133,8 +1147,12 @@ export class ToonWorkerPool {
 
     slot.t += dt;
     const statusChanged = live.status !== slot.prevStatus;
-    if (live.status === "done") {
-      slot.doneElapsed = slot.prevStatus === "done" ? slot.doneElapsed + dt : 0;
+    if (
+      live.status === "done" ||
+      live.status === "standup" ||
+      live.status === "error"
+    ) {
+      slot.doneElapsed = slot.prevStatus === live.status ? slot.doneElapsed + dt : 0;
     } else {
       slot.doneElapsed = 0;
     }
@@ -1161,8 +1179,10 @@ export class ToonWorkerPool {
       slot.stance
     );
 
-    const doneSettled =
-      live.status === "done" && (reducedMotion || slot.doneElapsed >= 3.0);
+    const statusSettled =
+      (live.status === "done" && (reducedMotion || slot.doneElapsed >= 3.0)) ||
+      (live.status === "standup" && (reducedMotion || slot.doneElapsed >= 2.0)) ||
+      (live.status === "error" && (reducedMotion || slot.doneElapsed >= 4.0));
 
     this.dummy.position.copy(slot.pos);
     this.dummy.rotation.set(0, slot.rotY, 0);
@@ -1170,7 +1190,7 @@ export class ToonWorkerPool {
     this.dummy.updateMatrix();
     slot.rootMatrix.copy(this.dummy.matrix);
 
-    this.dummy.position.set(0, reducedMotion || doneSettled ? 0 : s.lift, 0);
+    this.dummy.position.set(0, reducedMotion || statusSettled ? 0 : s.lift, 0);
     this.dummy.rotation.set(s.lean, s.turn, s.roll);
     this.dummy.scale.set(1, 1, 1);
     this.dummy.updateMatrix();
@@ -1253,7 +1273,7 @@ export class ToonWorkerPool {
 
     const settlingActs =
       slot.acts.size > 1 || Math.abs((slot.acts.get(act) ?? 0) - 1) > 0.01;
-    const activeStatus = live.status !== "idle" && !doneSettled;
+    const activeStatus = live.status !== "idle" && !statusSettled;
     const animating = !reducedMotion && (settlingActs || activeStatus);
     const bubblePending = this.updateBubble(
       slot,
@@ -1263,10 +1283,15 @@ export class ToonWorkerPool {
       nowMs
     );
     const shadowDirty = animating || statusChanged;
+    if (animating || statusChanged || slot.showPapers || slot.showGlobe) {
+      this.matricesDirty = true;
+    }
     return { animating: animating || bubblePending, shadowDirty };
   }
 
   commit(): void {
+    if (!this.matricesDirty) return;
+    this.matricesDirty = false;
     this.beanMesh.instanceMatrix.needsUpdate = true;
     this.headsetMesh.instanceMatrix.needsUpdate = true;
     this.bulbMesh.instanceMatrix.needsUpdate = true;
@@ -1623,10 +1648,9 @@ export class OfficeDog {
 
     if (needyDeskPos) {
       this.targetPos.set(needyDeskPos.x + 1.1, 0, needyDeskPos.z + 1.1);
-    } else if (Math.floor(this.t / 14) % 2 === 0) {
-      this.targetPos.set(7.2, 0, 1.5);
     } else {
-      this.targetPos.set(-5.8, 0, 0.2);
+      // Rest calmly in Biscuit's lounge corner when idle so the GPU can sleep at 0 FPS.
+      this.targetPos.set(7.2, 0, 1.5);
     }
 
     const dx = this.targetPos.x - this.root.position.x;

@@ -330,8 +330,11 @@ export class OfficeOrchestrator {
 
   resolveApproval(reqId: string, approved: boolean, note?: string): boolean {
     const pending = this.pendingApprovals.get(reqId);
-    if (!pending) return false;
-    this.pendingApprovals.delete(reqId);
+    const existing = this.state.approvals[reqId];
+    if (!pending && !existing) return false;
+    if (pending) {
+      this.pendingApprovals.delete(reqId);
+    }
     this.emit({
       id: crypto.randomUUID(),
       ts: Date.now(),
@@ -341,7 +344,23 @@ export class OfficeOrchestrator {
       resolvedBy: "director",
       note,
     });
-    pending.resolve(approved);
+    if (pending) {
+      pending.resolve(approved);
+    } else if (existing) {
+      // Fixture or replayed approval without an active coroutine: settle agent cleanly.
+      this.emit({
+        id: crypto.randomUUID(),
+        ts: Date.now(),
+        t: "agent.status",
+        agentId: existing.agentId,
+        runId: existing.runId,
+        ticketId: existing.ticketId,
+        status: approved ? "done" : "error",
+        detail: approved
+          ? `Approved by Director: ${existing.action}`
+          : `Denied by Director: ${existing.action}`,
+      });
+    }
     return true;
   }
 

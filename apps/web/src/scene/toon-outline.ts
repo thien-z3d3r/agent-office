@@ -98,6 +98,8 @@ export class ToonOutlineEffect {
   private readonly defaultKeepAlive: boolean;
   private readonly cache = new Map<string, OutlineCacheEntry>();
   private readonly originalMaterials = new Map<string, THREE.Material>();
+  private readonly swappedMeshes: SwappedMeshRecord[] = [];
+  private readonly hiddenSprites: THREE.Sprite[] = [];
   private readonly removeThresholdCount = 60;
 
   constructor(
@@ -209,8 +211,10 @@ export class ToonOutlineEffect {
   };
 
   render(scene: THREE.Scene, camera: THREE.Camera): void {
+    camera.layers.set(0);
     if (!this.enabled) {
       this.renderer.render(scene, camera);
+      this.renderOverlayLayer(scene, camera);
       return;
     }
     const currentAutoClear = this.renderer.autoClear;
@@ -218,6 +222,29 @@ export class ToonOutlineEffect {
     this.renderer.render(scene, camera);
     this.renderer.autoClear = currentAutoClear;
     this.renderOutline(scene, camera);
+    this.renderOverlayLayer(scene, camera);
+  }
+
+  private renderOverlayLayer(scene: THREE.Scene, camera: THREE.Camera): void {
+    const currentAutoClear = this.renderer.autoClear;
+    const currentMatrixAutoUpdate = scene.matrixWorldAutoUpdate;
+    const currentBackground = scene.background;
+    const currentShadowEnabled = this.renderer.shadowMap.enabled;
+
+    scene.matrixWorldAutoUpdate = false;
+    scene.background = null;
+    this.renderer.autoClear = false;
+    this.renderer.shadowMap.enabled = false;
+    camera.layers.set(1);
+    try {
+      this.renderer.render(scene, camera);
+    } finally {
+      camera.layers.set(0);
+      scene.matrixWorldAutoUpdate = currentMatrixAutoUpdate;
+      scene.background = currentBackground;
+      this.renderer.autoClear = currentAutoClear;
+      this.renderer.shadowMap.enabled = currentShadowEnabled;
+    }
   }
 
   renderOutline(scene: THREE.Scene, camera: THREE.Camera): void {
@@ -226,8 +253,10 @@ export class ToonOutlineEffect {
     const currentBackground = scene.background;
     const currentShadowEnabled = this.renderer.shadowMap.enabled;
 
-    const swappedMeshes: SwappedMeshRecord[] = [];
-    const hiddenSprites: THREE.Sprite[] = [];
+    const swappedMeshes = this.swappedMeshes;
+    const hiddenSprites = this.hiddenSprites;
+    swappedMeshes.length = 0;
+    hiddenSprites.length = 0;
 
     scene.matrixWorldAutoUpdate = false;
     scene.background = null;
@@ -290,6 +319,8 @@ export class ToonOutlineEffect {
         rec.object.material = rec.material;
         rec.object.onBeforeRender = rec.onBeforeRender;
       }
+      swappedMeshes.length = 0;
+      hiddenSprites.length = 0;
       this.cleanupCache();
       scene.matrixWorldAutoUpdate = currentMatrixAutoUpdate;
       scene.background = currentBackground;
